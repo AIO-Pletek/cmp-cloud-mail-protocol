@@ -1,0 +1,79 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+
+# Node.js
+node_modules/
+.next/
+out/
+.turbo/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Environment
+.env
+.env.local
+.env.production
+!.env.example
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Database
+*.sqlite3
+*.db
+
+# SSL/Certs
+*.pem
+*.key
+*.crt
+*.csr
+
+# DKIM Keys
+*.private
+*.public
+
+# Quarantine data
+quarantine/
+
+# Uploads
+uploads/
+
+# Backups
+*.tar.gz
+*.tar.bz2
+backups/
+
+# Alembic
+alembic/versions/*.py
+!alembic/versions/.gitkeep
+
+# Coverage
+htmlcov/
+.coverage
+coverage.xml
+
+# Misc
+.cache/
+.pytest_cache/
+.mypy_cache/

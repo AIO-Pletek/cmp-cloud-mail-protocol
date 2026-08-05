@@ -1,0 +1,48 @@
+[Unit]
+Description=CMP Scheduler (Celery Beat)
+Documentation=https://cmp.local/docs
+After=network.target postgresql.service redis-server.service cmp-worker.service
+Requires=postgresql.service redis-server.service
+PartOf=cmp.target
+
+[Service]
+Type=exec
+User=cmp
+Group=cmp
+WorkingDirectory=/opt/cmp/api
+Environment=PYTHONPATH=/opt/cmp/api
+EnvironmentFile=-/opt/cmp/.env
+ExecStart=/opt/cmp/venv/bin/celery -A cmp_api.celery_app beat \
+    --loglevel=info \
+    --schedule=/opt/cmp/data/celerybeat-schedule \
+    --pidfile=/run/cmp/celerybeat.pid \
+    --max-interval=300
+
+Restart=always
+RestartSec=10
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+# Resource limits
+LimitNOFILE=16384
+MemoryMax=512M
+CPUQuota=50%
+
+# Security hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/opt/cmp/data /var/log/cmp /run/cmp
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=cmp-scheduler
+
+[Install]
+WantedBy=multi-user.target

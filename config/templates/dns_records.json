@@ -1,0 +1,113 @@
+{
+  "description": "Required DNS records for CMP mail platform domains",
+  "global_records": {
+    "A": {
+      "name": "mail.cmp.local",
+      "value": "<SERVER_IP>",
+      "ttl": 3600,
+      "comment": "Mail server A record"
+    },
+    "MX": {
+      "name": "cmp.local",
+      "value": "mail.cmp.local",
+      "priority": 10,
+      "ttl": 3600
+    },
+    "TXT_SPf": {
+      "name": "cmp.local",
+      "value": "v=spf1 mx a ip4:<SERVER_IP> -all",
+      "ttl": 3600,
+      "comment": "SPF record - authorize server to send mail"
+    },
+    "TXT_dmarc": {
+      "name": "_dmarc.cmp.local",
+      "value": "v=DMARC1; p=reject; rua=mailto:dmarc-reports@cmp.local; ruf=mailto:dmarc-forensics@cmp.local; fo=1; adkim=r; aspf=r; pct=100",
+      "ttl": 3600,
+      "comment": "DMARC policy"
+    },
+    "MX_reverse": {
+      "name": "<SERVER_IP>",
+      "value": "mail.cmp.local",
+      "ttl": 3600,
+      "comment": "PTR / reverse DNS record (set via hosting provider)"
+    }
+  },
+  "per_domain_records": {
+    "description": "Create these records for each managed domain. Replace DOMAIN and SELECTOR accordingly.",
+    "MX": {
+      "name": "DOMAIN",
+      "value": "mail.cmp.local",
+      "priority": 10,
+      "ttl": 3600
+    },
+    "TXT_spf": {
+      "name": "DOMAIN",
+      "value": "v=spf1 mx a ip4:<SERVER_IP> include:mail.cmp.local -all",
+      "ttl": 3600
+    },
+    "TXT_dkim": {
+      "name": "SELECTOR._domainkey.DOMAIN",
+      "value": "v=DKIM1; k=rsa; p=<PUBLIC_KEY>",
+      "ttl": 3600,
+      "comment": "Run scripts/generate-dkim.sh to get the public key"
+    },
+    "TXT_dmarc": {
+      "name": "_dmarc.DOMAIN",
+      "value": "v=DMARC1; p=quarantine; rua=mailto:dmarc-reports@DOMAIN; pct=100",
+      "ttl": 3600
+    },
+    "SRV_autodiscover": {
+      "name": "_autodiscover._tcp.DOMAIN",
+      "target": "mail.cmp.local",
+      "port": 443,
+      "priority": 10,
+      "weight": 10,
+      "ttl": 3600
+    },
+    "SRV_imaps": {
+      "name": "_imaps._tcp.DOMAIN",
+      "target": "mail.cmp.local",
+      "port": 993,
+      "priority": 10,
+      "weight": 10,
+      "ttl": 3600
+    },
+    "SRV_submissions": {
+      "name": "_submissions._tcp.DOMAIN",
+      "target": "mail.cmp.local",
+      "port": 465,
+      "priority": 10,
+      "weight": 10,
+      "ttl": 3600
+    },
+    "CNAME_autoconfig": {
+      "name": "autoconfig.DOMAIN",
+      "value": "mail.cmp.local",
+      "ttl": 3600,
+      "comment": "Thunderbird autoconfig"
+    },
+    "CNAME_autodiscover": {
+      "name": "autodiscover.DOMAIN",
+      "value": "mail.cmp.local",
+      "ttl": 3600,
+      "comment": "Outlook autodiscover"
+    },
+    "MX_fallback": {
+      "name": "DOMAIN",
+      "value": "mail.cmp.local",
+      "priority": 20,
+      "ttl": 3600,
+      "comment": "Optional secondary MX"
+    }
+  },
+  "verification_checklist": [
+    "1. A record for mail.cmp.local resolves to correct IP",
+    "2. MX record points to mail.cmp.local",
+    "3. PTR reverse DNS matches forward A record",
+    "4. SPF TXT record includes server IP",
+    "5. DKIM TXT record published with correct selector and key",
+    "6. DMARC TXT record set with appropriate policy",
+    "7. Port 25/465/587 open in firewall",
+    "8. TLS certificate valid for mail.cmp.local"
+  ]
+}

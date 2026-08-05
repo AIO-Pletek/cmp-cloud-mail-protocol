@@ -1,0 +1,60 @@
+[Unit]
+Description=CMP API Server (FastAPI)
+Documentation=https://cmp.local/docs/api
+After=network.target postgresql.service redis-server.service
+Requires=postgresql.service redis-server.service
+PartOf=cmp.target
+
+[Service]
+Type=exec
+User=cmp
+Group=cmp
+WorkingDirectory=/opt/cmp/api
+Environment=PYTHONPATH=/opt/cmp/api
+EnvironmentFile=-/opt/cmp/.env
+ExecStartPre=/opt/cmp/venv/bin/python -c "import cmp_api; print('Module check OK')"
+ExecStart=/opt/cmp/venv/bin/uvicorn cmp_api.main:app \
+    --host 0.0.0.0 \
+    --port 8000 \
+    --workers 4 \
+    --log-level info \
+    --access-log \
+    --proxy-headers \
+    --forwarded-allow-ips='*' \
+    --timeout-keep-alive 65 \
+    --limit-concurrency 1000 \
+    --limit-max-requests 10000 \
+    --backlog 2048
+
+Restart=always
+RestartSec=5
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+# Resource limits
+LimitNOFILE=65535
+LimitNPROC=4096
+MemoryMax=2G
+CPUQuota=200%
+
+# Security hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/opt/cmp/data /var/log/cmp /var/mail/vhosts
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+RestrictRealtime=yes
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=cmp-api
+
+[Install]
+WantedBy=multi-user.target

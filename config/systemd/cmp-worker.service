@@ -1,0 +1,54 @@
+[Unit]
+Description=CMP Background Worker (Celery)
+Documentation=https://cmp.local/docs
+After=network.target postgresql.service redis-server.service
+Requires=postgresql.service redis-server.service
+PartOf=cmp.target
+
+[Service]
+Type=exec
+User=cmp
+Group=cmp
+WorkingDirectory=/opt/cmp/api
+Environment=PYTHONPATH=/opt/cmp/api
+EnvironmentFile=-/opt/cmp/.env
+ExecStart=/opt/cmp/venv/bin/celery -A cmp_api.celery_app worker \
+    --loglevel=info \
+    --concurrency=4 \
+    --max-tasks-per-child=1000 \
+    --time-limit=3600 \
+    --soft-time-limit=3000 \
+    --hostname=cmp-worker@%H \
+    -Q default,mail,spam,virus,dns \
+    --without-heartbeat \
+    --without-mingle
+
+Restart=always
+RestartSec=10
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+# Resource limits
+LimitNOFILE=65535
+LimitNPROC=4096
+MemoryMax=4G
+CPUQuota=300%
+
+# Security hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/opt/cmp/data /var/log/cmp /var/mail/vhosts /tmp
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=cmp-worker
+
+[Install]
+WantedBy=multi-user.target

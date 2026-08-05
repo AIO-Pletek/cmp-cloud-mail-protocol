@@ -1,0 +1,29 @@
+# CMP PostgreSQL Virtual Mailbox Query
+# /etc/postfix/pgsql-mailbox.cf
+# Used by: virtual_mailbox_maps = proxy:pgsql:/etc/postfix/pgsql-mailbox.cf
+
+# Database connection
+hosts = 127.0.0.1:5432
+user = cmp
+password = ${CMP_DB_PASSWORD}
+dbname = cmp
+
+# Query: Check if mailbox exists and return maildir path
+query = SELECT CONCAT('/var/mail/vhosts/', domain, '/', username, '/') FROM mail_users WHERE email = '%s' AND is_active = true
+
+# Connection settings
+version = 3
+expand_limit = 1
+
+# Example table schema:
+# CREATE TABLE mail_users (
+#     id SERIAL PRIMARY KEY,
+#     email VARCHAR(255) NOT NULL UNIQUE,
+#     username VARCHAR(255) NOT NULL,
+#     domain VARCHAR(255) NOT NULL REFERENCES mail_domains(domain_name),
+#     password_hash VARCHAR(255) NOT NULL,
+#     quota_mb INTEGER DEFAULT 1024,
+#     is_active BOOLEAN DEFAULT true,
+#     created_at TIMESTAMP DEFAULT NOW(),
+#     updated_at TIMESTAMP DEFAULT NOW()
+# );

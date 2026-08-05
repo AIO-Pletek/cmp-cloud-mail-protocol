@@ -1,0 +1,101 @@
+# CMP Postfix Main Configuration
+# /etc/postfix/main.cf
+
+# General
+smtpd_banner = $myhostname ESMTP CMP Mail Platform
+biff = no
+append_dot_mydomain = no
+readme_directory = no
+compatibility_level = 3.6
+
+# Hostname and Domain
+myhostname = mail.cmp.local
+mydomain = cmp.local
+myorigin = $mydomain
+mydestination = localhost
+mynetworks = 127.0.0.0/8 [::ffff:127.0.0.0]/104 [::1]/128
+
+# Interfaces
+inet_interfaces = all
+inet_protocols = all
+
+# Virtual Mailbox Configuration (PostgreSQL-backed)
+virtual_mailbox_domains = proxy:pgsql:/etc/postfix/pgsql-virtual.cf
+virtual_mailbox_maps = proxy:pgsql:/etc/postfix/pgsql-mailbox.cf
+virtual_transport = lmtp:unix:private/dovecot-lmtp
+virtual_minimum_uid = 100
+virtual_uid_maps = static:1000
+virtual_gid_maps = static:1000
+
+# TLS Settings - SMTPD (inbound)
+smtpd_tls_cert_file = /etc/ssl/certs/cmp.pem
+smtpd_tls_key_file = /etc/ssl/private/cmp.key
+smtpd_tls_security_level = may
+smtpd_tls_auth_only = yes
+smtpd_tls_mandatory_protocols = !SSLv2, !SSLv3, !TLSv1, !TLSv1.1
+smtpd_tls_protocols = !SSLv2, !SSLv3, !TLSv1, !TLSv1.1
+smtpd_tls_mandatory_ciphers = high
+smtpd_tls_ciphers = high
+smtpd_tls_session_cache_database = btree:${data_directory}/smtpd_scache
+smtpd_tls_loglevel = 1
+
+# TLS Settings - SMTP (outbound)
+smtp_tls_security_level = may
+smtp_tls_mandatory_protocols = !SSLv2, !SSLv3, !TLSv1, !TLSv1.1
+smtp_tls_protocols = !SSLv2, !SSLv3, !TLSv1, !TLSv1.1
+smtp_tls_session_cache_database = btree:${data_directory}/smtp_scache
+smtp_tls_loglevel = 1
+
+# SASL Authentication
+smtpd_sasl_auth_enable = yes
+smtpd_sasl_type = dovecot
+smtpd_sasl_path = private/auth
+smtpd_sasl_security_options = noanonymous, noplaintext
+smtpd_sasl_tls_security_options = noanonymous
+
+# Recipient Restrictions
+smtpd_recipient_restrictions =
+    permit_sasl_authenticated,
+    permit_mynetworks,
+    reject_unauth_destination,
+    reject_invalid_hostname,
+    reject_non_fqdn_hostname,
+    reject_non_fqdn_sender,
+    reject_non_fqdn_recipient,
+    reject_unknown_sender_domain,
+    reject_rbl_client zen.spamhaus.org,
+    reject_rbl_client bl.spamcop.net
+
+# Content Filter (Rspamd)
+content_filter = smtp:[127.0.0.1]:10025
+
+# Milter Configuration (Rspamd + OpenDKIM via Rspamd)
+smtpd_milters = inet:127.0.0.1:11332
+non_smtpd_milters = inet:127.0.0.1:11332
+milter_default_action = accept
+milter_connect_macros = j {daemon_name} v {if_name} _
+milter_mail_macros = i {mail_addr} {client_addr} {client_name} {auth_authen} {auth_type}
+milter_content_timeout = 300s
+
+# Size Limits
+message_size_limit = 52428800
+mailbox_size_limit = 0
+virtual_mailbox_limit = 0
+
+# Queue Management
+maximal_queue_lifetime = 5d
+bounce_queue_lifetime = 2d
+maximal_backoff_time = 4000s
+minimal_backoff_time = 300s
+queue_run_delay = 300s
+
+# Connection Limits
+smtpd_client_connection_rate_limit = 100
+smtpd_client_message_rate_limit = 200
+anvil_rate_time_unit = 300s
+
+# Header Checks
+header_checks = regexp:/etc/postfix/header_checks
+
+# Logging
+maillog_file = /var/log/mail.log

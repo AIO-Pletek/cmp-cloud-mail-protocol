@@ -1,0 +1,25 @@
+# CMP PostgreSQL Virtual Domains Query
+# /etc/postfix/pgsql-virtual.cf
+# Used by: virtual_mailbox_domains = proxy:pgsql:/etc/postfix/pgsql-virtual.cf
+
+# Database connection
+hosts = 127.0.0.1:5432
+user = cmp
+password = ${CMP_DB_PASSWORD}
+dbname = cmp
+
+# Query: Check if domain exists and is active
+query = SELECT domain_name FROM mail_domains WHERE domain_name = '%s' AND is_active = true
+
+# Connection settings
+version = 3
+expand_limit = 1
+
+# Example table schema:
+# CREATE TABLE mail_domains (
+#     id SERIAL PRIMARY KEY,
+#     domain_name VARCHAR(255) NOT NULL UNIQUE,
+#     is_active BOOLEAN DEFAULT true,
+#     created_at TIMESTAMP DEFAULT NOW(),
+#     updated_at TIMESTAMP DEFAULT NOW()
+# );
