@@ -7,18 +7,10 @@ import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { TrafficChart } from '@/components/dashboard/traffic-chart';
-import { CheckCircle, XCircle, Copy, ArrowLeft, Loader2 } from 'lucide-react';
+import { CheckCircle, XCircle, Copy, ArrowLeft, Loader2, Shield } from 'lucide-react';
 import { formatNumber, formatDate } from '@/lib/utils';
 import Link from 'next/link';
 import toast from 'react-hot-toast';
-
-interface DnsRecord {
-  name: string;
-  value: string;
-  ok: boolean;
-  type: string;
-}
 
 export default function DomainDetailPage() {
   const params = useParams();
@@ -26,7 +18,13 @@ export default function DomainDetailPage() {
 
   const { data: domain, isLoading } = useQuery({
     queryKey: ['domain', domainId],
+    queryFn: () => cmpApi.domains.get(domainId),
+  });
+
+  const { data: dnsCheck } = useQuery({
+    queryKey: ['dns-check', domainId],
     queryFn: () => cmpApi.domains.dnsCheck(domainId),
+    enabled: !!domain,
   });
 
   const { data: filters } = useQuery({
@@ -58,11 +56,11 @@ export default function DomainDetailPage() {
     );
   }
 
-  const dnsRecords: DnsRecord[] = [
-    { name: 'MX Record', value: domain.mxRecord || 'Not configured', ok: !!domain.mxRecord, type: 'MX' },
-    { name: 'SPF Record', value: domain.spfRecord || 'Not configured', ok: !!domain.spfRecord, type: 'TXT' },
-    { name: 'DKIM Selector', value: domain.dkimPublicKey ? `${domain.dkimSelector}._domainkey.${domain.domainName}` : 'Not configured', ok: !!domain.dkimPublicKey, type: 'TXT' },
-    { name: 'DMARC Record', value: domain.dmarcRecord || 'Not configured', ok: !!domain.dmarcRecord, type: 'TXT' },
+  const dnsRecords = [
+    { name: 'MX Record', value: domain.mxRecord || 'Not configured', ok: dnsCheck?.mxOk ?? !!domain.mxRecord, type: 'MX' },
+    { name: 'SPF Record', value: domain.spfRecord || 'Not configured', ok: dnsCheck?.spfOk ?? !!domain.spfRecord, type: 'TXT' },
+    { name: 'DKIM Selector', value: domain.dkimPublicKey ? `${domain.dkimSelector}._domainkey.${domain.domainName}` : 'Not configured', ok: dnsCheck?.dkimOk ?? !!domain.dkimPublicKey, type: 'TXT' },
+    { name: 'DMARC Record', value: domain.dmarcRecord || 'Not configured', ok: dnsCheck?.dmarcOk ?? !!domain.dmarcRecord, type: 'TXT' },
   ];
 
   return (
@@ -139,9 +137,6 @@ export default function DomainDetailPage() {
         </CardContent>
       </Card>
 
-      {/* Traffic Chart */}
-      <TrafficChart />
-
       {/* Filter Rules */}
       <Card>
         <CardHeader>
@@ -164,7 +159,7 @@ export default function DomainDetailPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filters.map((filter) => (
+                {filters.map((filter: any) => (
                   <TableRow key={filter.id}>
                     <TableCell className="font-mono text-sm">{filter.pattern}</TableCell>
                     <TableCell><Badge variant="info">{filter.ruleType}</Badge></TableCell>

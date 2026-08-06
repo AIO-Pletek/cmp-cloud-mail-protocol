@@ -123,9 +123,10 @@ export const cmpApi = {
   },
   domains: {
     list: () => api.get<Domain[]>('/domains').then((r) => r.data),
+    get: (id: string) => api.get<Domain>(`/domains/${id}`).then((r) => r.data),
     create: (domainName: string) => api.post<Domain>('/domains', { domainName }).then((r) => r.data),
     verify: (id: string) => api.post<Domain>(`/domains/${id}/verify`).then((r) => r.data),
-    dnsCheck: (id: string) => api.get<Domain>(`/domains/${id}/dns-check`).then((r) => r.data),
+    dnsCheck: (id: string) => api.get(`/domains/${id}/dns-check`).then((r) => r.data),
     delete: (id: string) => api.delete(`/domains/${id}`).then((r) => r.data),
   },
   filters: {
