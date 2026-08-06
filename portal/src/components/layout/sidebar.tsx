@@ -14,6 +14,7 @@ import {
   Mail,
   ChevronLeft,
   ChevronRight,
+  List,
 } from 'lucide-react';
 import { useState } from 'react';
 
@@ -22,6 +23,7 @@ const navItems = [
   { href: '/domains', label: 'Domains', icon: Globe },
   { href: '/filters', label: 'Filter Rules', icon: Shield },
   { href: '/quarantine', label: 'Quarantine', icon: MailWarning },
+  { href: '/queue', label: 'Mail Queue', icon: List },
   { href: '/reports', label: 'Reports', icon: BarChart3 },
   { href: '/settings', label: 'Settings', icon: Settings },
 ];

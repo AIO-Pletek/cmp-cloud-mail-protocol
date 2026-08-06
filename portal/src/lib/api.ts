@@ -142,6 +142,16 @@ export const cmpApi = {
         headers: { 'Content-Type': 'multipart/form-data' },
       }).then((r) => r.data),
   },
+  queue: {
+    list: () => api.get<{ items: any[]; total: number }>('/queue').then((r) => r.data),
+    stats: () => api.get<{ total: number; active: number; hold: number; deferred: number }>('/queue/stats').then((r) => r.data),
+    flush: () => api.post('/queue/flush').then((r) => r.data),
+    flushOne: (id: string) => api.post(`/queue/${id}/flush`).then((r) => r.data),
+    hold: (id: string) => api.post(`/queue/${id}/hold`).then((r) => r.data),
+    release: (id: string) => api.post(`/queue/${id}/release`).then((r) => r.data),
+    deleteOne: (id: string) => api.delete(`/queue/${id}`).then((r) => r.data),
+    deleteAll: () => api.delete('/queue').then((r) => r.data),
+  },
 };
 
 export default api;

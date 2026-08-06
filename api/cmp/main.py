@@ -3,7 +3,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from cmp.database import engine, Base
 from cmp.models import Tenant, Domain, FilterRule, Quarantine, AuditLog
-from cmp.routes import auth, tenants, domains, filters, quarantine, reports
+from cmp.routes import auth, tenants, domains, filters, quarantine, reports, queue
 
 
 @asynccontextmanager
@@ -35,6 +35,7 @@ app.include_router(domains.router)
 app.include_router(filters.router)
 app.include_router(quarantine.router)
 app.include_router(reports.router)
+app.include_router(queue.router)
 
 
 @app.get("/health", tags=["Health"])
