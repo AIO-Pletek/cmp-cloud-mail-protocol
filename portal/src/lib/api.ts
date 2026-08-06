@@ -1,6 +1,22 @@
 import axios, { AxiosError, InternalAxiosRequestConfig } from 'axios';
 import { Tenant, Domain, FilterRule, QuarantineItem, QuarantineStats, TrafficStats, DomainHealth } from '@/types';
 
+// Snake_case to camelCase converter
+function snakeToCamel(str: string): string {
+  return str.replace(/_([a-z])/g, (_, letter) => letter.toUpperCase());
+}
+
+function convertKeysToCamel(obj: any): any {
+  if (obj === null || obj === undefined) return obj;
+  if (Array.isArray(obj)) return obj.map(convertKeysToCamel);
+  if (typeof obj === 'object' && !(obj instanceof Date)) {
+    return Object.fromEntries(
+      Object.entries(obj).map(([key, value]) => [snakeToCamel(key), convertKeysToCamel(value)])
+    );
+  }
+  return obj;
+}
+
 const api = axios.create({
   baseURL: process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080/api/v1',
   headers: { 'Content-Type': 'application/json' },
@@ -29,7 +45,13 @@ api.interceptors.request.use((config: InternalAxiosRequestConfig) => {
 });
 
 api.interceptors.response.use(
-  (response) => response,
+  (response) => {
+    // Convert snake_case response keys to camelCase
+    if (response.data) {
+      response.data = convertKeysToCamel(response.data);
+    }
+    return response;
+  },
   async (error: AxiosError) => {
     const originalRequest = error.config as InternalAxiosRequestConfig & { _retry?: boolean };
     if (error.response?.status === 401 && !originalRequest._retry) {
