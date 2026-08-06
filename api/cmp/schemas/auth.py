@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, ConfigDict
 
 
 class LoginRequest(BaseModel):
@@ -7,8 +7,10 @@ class LoginRequest(BaseModel):
 
 
 class TokenPair(BaseModel):
-    access_token: str
-    refresh_token: str
+    model_config = ConfigDict(populate_by_name=True)
+    
+    accessToken: str = Field(alias="access_token")
+    refreshToken: str = Field(alias="refresh_token")
     token_type: str = "bearer"
 
 

@@ -20,18 +20,25 @@ async def register(req: RegisterRequest, request: Request, db: AsyncSession = De
     return tenant
 
 
-@router.post("/login", response_model=TokenPair)
+@router.post("/login")
 async def login(req: LoginRequest, request: Request, db: AsyncSession = Depends(get_db)):
     tenant = await authenticate_tenant(db, req.email, req.password)
     await log_audit(db, tenant.id, tenant.email, "login", "tenant", tenant.id, ip_address=request.client.host if request.client else None)
-    return create_token_pair(tenant)
+    tokens = create_token_pair(tenant)
+    tenant_data = TenantRead.model_validate(tenant)
+    return {
+        "accessToken": tokens.access_token,
+        "refreshToken": tokens.refresh_token,
+        "tokenType": tokens.token_type,
+        "user": tenant_data.model_dump()
+    }
 
 
-@router.post("/refresh", response_model=TokenPair)
+@router.post("/refresh")
 async def refresh(body: dict, db: AsyncSession = Depends(get_db)):
-    refresh_token = body.get("refresh_token")
+    refresh_token = body.get("refreshToken") or body.get("refresh_token")
     if not refresh_token:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="refresh_token is required")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="refreshToken is required")
     return await refresh_access_token(db, refresh_token)
 
 
