@@ -1,8 +1,9 @@
 """Mail queue API routes."""
-from fastapi import APIRouter, HTTPException, status, Depends
+from fastapi import APIRouter, HTTPException, Depends
 from cmp.services.queue_service import (
-    get_queue_list, get_queue_count, flush_queue, flush_single,
-    delete_from_queue, delete_all, hold_message, release_message, get_queue_stats
+    get_queue_list, flush_queue, flush_single,
+    delete_from_queue, delete_all, hold_message, release_message,
+    get_queue_stats, get_message_detail, get_message_headers
 )
 from cmp.middleware.auth import get_current_user
 
@@ -13,16 +14,31 @@ router = APIRouter(prefix="/api/v1/queue", tags=["Mail Queue"])
 async def list_queue(tenant=Depends(get_current_user)):
     """List all mail queue entries."""
     items = await get_queue_list()
-    return {
-        "items": items,
-        "total": len(items)
-    }
+    return {"items": items, "total": len(items)}
 
 
 @router.get("/stats")
 async def queue_stats(tenant=Depends(get_current_user)):
     """Get queue statistics."""
     return await get_queue_stats()
+
+
+@router.get("/{queue_id}")
+async def message_detail(queue_id: str, tenant=Depends(get_current_user)):
+    """Get full message detail including headers and body preview."""
+    result = await get_message_detail(queue_id)
+    if "error" in result:
+        raise HTTPException(status_code=404, detail=result["error"])
+    return result
+
+
+@router.get("/{queue_id}/headers")
+async def message_headers(queue_id: str, tenant=Depends(get_current_user)):
+    """Get only headers from a queued message."""
+    result = await get_message_headers(queue_id)
+    if "error" in result:
+        raise HTTPException(status_code=404, detail=result["error"])
+    return result
 
 
 @router.post("/flush")

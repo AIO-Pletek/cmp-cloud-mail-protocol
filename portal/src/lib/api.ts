@@ -145,6 +145,8 @@ export const cmpApi = {
   queue: {
     list: () => api.get<{ items: any[]; total: number }>('/queue').then((r) => r.data),
     stats: () => api.get<{ total: number; active: number; hold: number; deferred: number }>('/queue/stats').then((r) => r.data),
+    detail: (id: string) => api.get(`/queue/${id}`).then((r) => r.data),
+    headers: (id: string) => api.get(`/queue/${id}/headers`).then((r) => r.data),
     flush: () => api.post('/queue/flush').then((r) => r.data),
     flushOne: (id: string) => api.post(`/queue/${id}/flush`).then((r) => r.data),
     hold: (id: string) => api.post(`/queue/${id}/hold`).then((r) => r.data),

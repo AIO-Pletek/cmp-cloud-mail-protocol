@@ -11,8 +11,11 @@ import {
   Table, TableHeader, TableBody, TableRow, TableHead, TableCell
 } from '@/components/ui/table';
 import {
-  RefreshCw, Trash2, Play, Pause, Search, Mail, AlertTriangle,
-  Send, Clock, CheckCircle
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription
+} from '@/components/ui/dialog';
+import {
+  RefreshCw, Trash2, Play, Pause, Search, Mail, Eye,
+  Send, Clock, CheckCircle, X, Copy, FileText
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -20,6 +23,10 @@ export default function QueuePage() {
   const queryClient = useQueryClient();
   const [search, setSearch] = useState('');
   const [confirmDeleteAll, setConfirmDeleteAll] = useState(false);
+  const [selectedMessage, setSelectedMessage] = useState<any>(null);
+  const [showHeaders, setShowHeaders] = useState(false);
+  const [headersData, setHeadersData] = useState<any>(null);
+  const [loadingHeaders, setLoadingHeaders] = useState(false);
 
   const { data: queueData, isLoading, refetch } = useQuery({
     queryKey: ['queue'],
@@ -87,6 +94,41 @@ export default function QueuePage() {
     },
     onError: () => toast.error('Failed to delete all'),
   });
+
+  const viewHeaders = async (item: any) => {
+    setSelectedMessage(item);
+    setShowHeaders(true);
+    setLoadingHeaders(true);
+    setHeadersData(null);
+    try {
+      const data = await cmpApi.queue.headers(item.queue_id);
+      setHeadersData(data);
+    } catch (err: any) {
+      setHeadersData({ error: err?.response?.data?.detail || 'Failed to load headers' });
+    } finally {
+      setLoadingHeaders(false);
+    }
+  };
+
+  const viewDetail = async (item: any) => {
+    setSelectedMessage(item);
+    setShowHeaders(true);
+    setLoadingHeaders(true);
+    setHeadersData(null);
+    try {
+      const data = await cmpApi.queue.detail(item.queue_id);
+      setHeadersData(data);
+    } catch (err: any) {
+      setHeadersData({ error: err?.response?.data?.detail || 'Failed to load message detail' });
+    } finally {
+      setLoadingHeaders(false);
+    }
+  };
+
+  const copyToClipboard = (text: string) => {
+    navigator.clipboard.writeText(text);
+    toast.success('Copied to clipboard');
+  };
 
   const items = queueData?.items || [];
   const filtered = items.filter((item: any) => {
@@ -240,6 +282,14 @@ export default function QueuePage() {
                     <TableCell className="text-sm text-gray-500">{item.time || '-'}</TableCell>
                     <TableCell className="text-right">
                       <div className="flex items-center justify-end gap-1">
+                        <Button variant="ghost" size="icon" title="View Headers"
+                          onClick={() => viewHeaders(item)}>
+                          <Eye className="w-4 h-4 text-purple-600" />
+                        </Button>
+                        <Button variant="ghost" size="icon" title="View Full Detail"
+                          onClick={() => viewDetail(item)}>
+                          <FileText className="w-4 h-4 text-blue-600" />
+                        </Button>
                         {item.status === 'hold' ? (
                           <Button variant="ghost" size="icon" title="Release"
                             onClick={() => releaseMsg.mutate(item.queue_id)}>
@@ -268,6 +318,134 @@ export default function QueuePage() {
           )}
         </CardContent>
       </Card>
+
+      {/* Headers Detail Dialog */}
+      <Dialog open={showHeaders} onOpenChange={setShowHeaders}>
+        <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <FileText className="w-5 h-5" />
+              Message Detail — {selectedMessage?.queue_id}
+            </DialogTitle>
+            <DialogDescription>
+              Email headers and message metadata from Postfix queue
+            </DialogDescription>
+          </DialogHeader>
+
+          {loadingHeaders ? (
+            <div className="flex items-center justify-center py-8">
+              <RefreshCw className="w-6 h-6 animate-spin text-gray-400" />
+              <span className="ml-2 text-gray-500">Loading headers...</span>
+            </div>
+          ) : headersData?.error ? (
+            <div className="bg-red-50 border border-red-200 rounded-lg p-4 text-red-700">
+              {headersData.error}
+            </div>
+          ) : headersData ? (
+            <div className="space-y-4">
+              {/* Metadata */}
+              {headersData.metadata && Object.keys(headersData.metadata).length > 0 && (
+                <div>
+                  <h4 className="text-sm font-semibold text-gray-700 mb-2">Queue Metadata</h4>
+                  <div className="bg-gray-50 rounded-lg p-3 text-xs font-mono space-y-1">
+                    {Object.entries(headersData.metadata).map(([k, v]) => (
+                      <div key={k} className="flex gap-2">
+                        <span className="text-gray-500 w-40 shrink-0">{k}:</span>
+                        <span className="text-gray-900">{String(v)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Parsed Headers */}
+              {headersData.headers && Object.keys(headersData.headers).length > 0 && (
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <h4 className="text-sm font-semibold text-gray-700">Email Headers</h4>
+                    <Button variant="ghost" size="sm" onClick={() => copyToClipboard(
+                      Object.entries(headersData.headers).map(([k, v]) => `${k}: ${v}`).join('\n')
+                    )}>
+                      <Copy className="w-3 h-3 mr-1" /> Copy All
+                    </Button>
+                  </div>
+                  <div className="bg-gray-900 rounded-lg p-4 text-xs font-mono space-y-1.5 max-h-96 overflow-y-auto">
+                    {Object.entries(headersData.headers).map(([k, v]) => (
+                      <div key={k} className="flex gap-2">
+                        <span className="text-emerald-400 shrink-0">{k}:</span>
+                        <span className="text-gray-200 break-all">{String(v)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Common Headers Highlight */}
+              {headersData.headers && (
+                <div>
+                  <h4 className="text-sm font-semibold text-gray-700 mb-2">Key Information</h4>
+                  <div className="grid grid-cols-2 gap-3">
+                    {['From', 'To', 'Subject', 'Date', 'Message-ID', 'Return-Path', 'Reply-To', 'Content-Type'].map(key => {
+                      const val = headersData.headers[key] || headersData.headers[key.toLowerCase()];
+                      if (!val) return null;
+                      return (
+                        <div key={key} className="bg-blue-50 border border-blue-100 rounded-lg p-2.5">
+                          <p className="text-xs text-blue-600 font-medium">{key}</p>
+                          <p className="text-sm text-gray-900 mt-0.5 break-all">{val}</p>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Auth Headers */}
+              {headersData.headers && (
+                <div>
+                  <h4 className="text-sm font-semibold text-gray-700 mb-2">Authentication</h4>
+                  <div className="space-y-2">
+                    {['Authentication-Results', 'DKIM-Signature', 'Received-SPF', 'ARC-Authentication-Results'].map(key => {
+                      const val = headersData.headers[key] || headersData.headers[key.toLowerCase()];
+                      if (!val) return null;
+                      return (
+                        <div key={key} className="bg-green-50 border border-green-100 rounded-lg p-2.5">
+                          <p className="text-xs text-green-700 font-medium">{key}</p>
+                          <p className="text-xs text-gray-700 mt-0.5 font-mono break-all whitespace-pre-wrap">{val}</p>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Raw Headers */}
+              {headersData.header_raw && (
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <h4 className="text-sm font-semibold text-gray-700">Raw Headers</h4>
+                    <Button variant="ghost" size="sm" onClick={() => copyToClipboard(headersData.header_raw)}>
+                      <Copy className="w-3 h-3 mr-1" /> Copy
+                    </Button>
+                  </div>
+                  <pre className="bg-gray-50 border rounded-lg p-3 text-xs font-mono text-gray-700 max-h-48 overflow-y-auto whitespace-pre-wrap">
+                    {headersData.header_raw}
+                  </pre>
+                </div>
+              )}
+
+              {/* Body Preview */}
+              {headersData.body_preview && (
+                <div>
+                  <h4 className="text-sm font-semibold text-gray-700 mb-2">Body Preview</h4>
+                  <pre className="bg-gray-50 border rounded-lg p-3 text-xs font-mono text-gray-600 max-h-32 overflow-y-auto whitespace-pre-wrap">
+                    {headersData.body_preview}
+                  </pre>
+                </div>
+              )}
+            </div>
+          ) : null}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
