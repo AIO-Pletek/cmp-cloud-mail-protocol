@@ -8,6 +8,7 @@ interface TrafficDataPoint {
   incoming: number;
   outgoing: number;
   spam: number;
+  [key: string]: any;
 }
 
 const defaultData: TrafficDataPoint[] = [

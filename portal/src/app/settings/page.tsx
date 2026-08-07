@@ -69,7 +69,7 @@ export default function SettingsPage() {
         {/* Tab nav */}
         <div className="w-48 flex-shrink-0">
           <nav className="space-y-1">
-            {tabs.map((tab) => (
+            {tabs.map((tab: any) => (
               <button
                 key={tab}
                 onClick={() => setActiveTab(tab)}
@@ -89,7 +89,7 @@ export default function SettingsPage() {
               <CardContent className="space-y-4">
                 <Input label="Name" value={name} onChange={(e) => setName(e.target.value)} />
                 <Input label="Email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
-                <Input label="Role" value={user?.role || 'User'} disabled />
+                <Input label="Role" value={(user as any)?.role || 'User'} disabled />
                 <Button onClick={handleSaveProfile}>Save Changes</Button>
               </CardContent>
             </Card>

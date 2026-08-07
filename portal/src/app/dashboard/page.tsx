@@ -39,7 +39,7 @@ export default function DashboardPage() {
           <p className="text-sm text-gray-500 mt-1">Your mail gateway performance at a glance</p>
         </div>
         <div className="flex items-center bg-gray-100 rounded-lg p-1">
-          {periods.map((p) => (
+          {periods.map((p: any) => (
             <button
               key={p.value}
               onClick={() => setPeriod(p.value)}
@@ -60,7 +60,7 @@ export default function DashboardPage() {
       {/* Charts */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2">
-          <TrafficChart data={traffic?.byHour?.map((h) => ({ hour: h.hour, incoming: h.incoming, outgoing: h.outgoing, spam: h.spam }))} />
+          <TrafficChart data={traffic?.byHour?.map((h: any) => ({ hour: String(h.hour).padStart(2, "0") + ":00", incoming: h.incoming || 0, outgoing: h.outgoing || h.count || 0, spam: h.spam || 0 }))} />
         </div>
         <div>
           <SpamRatioChart />

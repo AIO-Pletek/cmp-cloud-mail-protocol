@@ -218,7 +218,7 @@ export default function DomainSetupPage() {
   };
 
   const getStepStatus = (step: StepDef): 'done' | 'current' | 'pending' => {
-    const done = setup[step.doneKey] as boolean;
+    const done = (setup as any)[step.doneKey] as boolean;
     if (done) return 'done';
     // Current step = first incomplete step
     const firstIncomplete = steps.find((s) => !(setup[s.doneKey] as boolean));
@@ -302,9 +302,9 @@ export default function DomainSetupPage() {
 
       {/* Steps */}
       <div className="space-y-4">
-        {steps.map((step) => {
+        {steps.map((step: any) => {
           const status = getStepStatus(step);
-          const done = setup[step.doneKey] as boolean;
+          const done = (setup as any)[step.doneKey] as boolean;
           const record = getStepRecord(step);
           const isExpanded = expandedStep === step.num || status === 'current' || (!done && expandedStep === null && step.num === 1);
 
@@ -349,7 +349,7 @@ export default function DomainSetupPage() {
                   <div className="bg-blue-50 border border-blue-100 rounded-lg p-3">
                     <p className="text-xs font-semibold text-blue-800 mb-2">Instructions:</p>
                     <ol className="text-xs text-blue-700 space-y-1.5 list-decimal list-inside">
-                      {step.instructions.map((inst, i) => (
+                      {step.instructions.map((inst: any, i: any) => (
                         <li key={i}>{inst}</li>
                       ))}
                     </ol>

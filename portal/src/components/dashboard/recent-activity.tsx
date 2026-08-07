@@ -37,8 +37,8 @@ export function RecentActivity({ data }: { data?: Activity[] }) {
       </CardHeader>
       <CardContent>
         <div className="space-y-4">
-          {activities.map((activity) => {
-            const config = iconMap[activity.type];
+          {activities.map((activity: any) => {
+            const config = (iconMap as any)[activity.type];
             const Icon = config.icon;
             return (
               <div key={activity.id} className="flex items-start gap-3">

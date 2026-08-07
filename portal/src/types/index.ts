@@ -19,10 +19,10 @@ export interface Domain {
   domainName: string;
   isVerified: boolean;
   dkimSelector: string;
-  dkimPublicKey: string;
-  spfRecord: string;
-  dmarcRecord: string;
-  mxRecord: string;
+  dkimPublicKey: string | null;
+  spfRecord: string | null;
+  dmarcRecord: string | null;
+  mxRecord: string | null;
   isActive: boolean;
   emailCount: number;
   spamBlocked: number;
