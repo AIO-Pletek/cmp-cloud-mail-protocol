@@ -3,208 +3,141 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { cmpApi } from '@/lib/api';
-import { Tenant } from '@/types';
+import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
-import { Card, CardContent } from '@/components/ui/card';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Plus, Edit, Trash2, Loader2 } from 'lucide-react';
+import { Plus, Loader2, LogIn, Users, Shield, Globe } from 'lucide-react';
 import { formatDate } from '@/lib/utils';
 import toast from 'react-hot-toast';
+import { useRouter } from 'next/navigation';
+
+function getToken() { return typeof window !== 'undefined' ? localStorage.getItem('cmp_access_token') || '' : ''; }
+const apiGet = async (url: string) => { const r = await fetch('/api/v1' + url, { headers: { 'Authorization': 'Bearer ' + getToken() } }); return r.json(); };
+const apiPost = async (url: string, body: any) => { const r = await fetch('/api/v1' + url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getToken() }, body: JSON.stringify(body) }); return r.json(); };
 
 export default function TenantsPage() {
-  const queryClient = useQueryClient();
-  const [addOpen, setAddOpen] = useState(false);
-  const [editTenant, setEditTenant] = useState<Tenant | null>(null);
-  const [deleteId, setDeleteId] = useState<string | null>(null);
-  const [form, setForm] = useState<{ name: string; email: string; plan: 'free' | 'starter' | 'pro' | 'enterprise' }>({ name: '', email: '', plan: 'free' });
+  const qc = useQueryClient();
+  const router = useRouter();
+  const [showAdd, setShowAdd] = useState(false);
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [plan, setPlan] = useState('starter');
 
-  const { data: tenants, isLoading } = useQuery({
+  const { data: tenantsRaw, isLoading } = useQuery({
     queryKey: ['tenants'],
-    queryFn: () => cmpApi.tenants.list(),
+    queryFn: () => apiGet('/tenants'),
   });
+  const tenants = Array.isArray(tenantsRaw) ? tenantsRaw : [];
 
-  const updateMutation = useMutation({
-    mutationFn: ({ id, data }: { id: string; data: Partial<Tenant> }) => cmpApi.tenants.update(id, data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['tenants'] });
-      setEditTenant(null);
-      toast.success('Tenant updated');
+  const createMut = useMutation({
+    mutationFn: () => apiPost('/tenants', { name, email, password, plan }),
+    onSuccess: (data: any) => {
+      toast.success('Tenant created');
+      qc.invalidateQueries({ queryKey: ['tenants'] });
+      setShowAdd(false);
+      setName('');
+      setEmail('');
+      setPassword('');
     },
-    onError: () => toast.error('Failed to update tenant'),
+    onError: (e: any) => toast.error(e?.detail || 'Failed to create tenant'),
   });
 
-  const handleEdit = (tenant: Tenant) => {
-    setEditTenant(tenant);
-    setForm({ name: tenant.name, email: tenant.email, plan: tenant.plan });
-  };
+  const impersonateMut = useMutation({
+    mutationFn: async (tenantId: string) => {
+      const r = await fetch('/api/v1/tenants/' + tenantId + '/impersonate', {
+        method: 'POST',
+        headers: { 'Authorization': 'Bearer ' + getToken() },
+      });
+      return r.json();
+    },
+    onSuccess: (data: any) => {
+      if (data.accessToken) {
+        localStorage.setItem('cmp_access_token', data.accessToken);
+        localStorage.setItem('cmp_refresh_token', data.refreshToken);
+        toast.success('Impersonating: ' + data.user.email);
+        router.push('/dashboard');
+      } else {
+        toast.error(data.detail || 'Impersonate failed');
+      }
+    },
+  });
 
-  const handleSaveEdit = () => {
-    if (!editTenant) return;
-    updateMutation.mutate({ id: editTenant.id, data: form });
-  };
-
-  const planColors: Record<string, 'default' | 'info' | 'success' | 'warning'> = {
-    free: 'default',
-    starter: 'info',
-    pro: 'success',
-    enterprise: 'warning',
+  const planColors: Record<string, string> = {
+    free: 'bg-gray-100 text-gray-700',
+    starter: 'bg-blue-100 text-blue-700',
+    pro: 'bg-green-100 text-green-700',
+    enterprise: 'bg-purple-100 text-purple-700',
   };
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-2xl font-bold text-gray-900">Tenants</h2>
-          <p className="text-sm text-gray-500 mt-1">Manage tenant accounts and subscriptions</p>
+          <h2 className="text-2xl font-bold text-gray-900 flex items-center gap-2"><Users className="w-6 h-6" /> Tenant Management</h2>
+          <p className="text-sm text-gray-500">Create and manage tenant accounts</p>
         </div>
-        <Button onClick={() => { setForm({ name: '', email: '', plan: 'free' }); setAddOpen(true); }}>
-          <Plus className="w-4 h-4 mr-2" />
-          Create Tenant
-        </Button>
+        <Button onClick={() => setShowAdd(!showAdd)}><Plus className="w-4 h-4 mr-1" />{showAdd ? 'Cancel' : 'Create Tenant'}</Button>
       </div>
 
-      <Card>
-        <CardContent className="p-0">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Name</TableHead>
-                <TableHead>Email</TableHead>
-                <TableHead>Plan</TableHead>
-                <TableHead className="text-center">Domains</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Created</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
+      {showAdd && (
+        <Card><CardContent className="p-4">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+            <div><label className="text-xs text-gray-500 mb-1 block">Company Name</label><Input placeholder="Acme Corp" value={name} onChange={(e: any) => setName(e.target.value)} /></div>
+            <div><label className="text-xs text-gray-500 mb-1 block">Email</label><Input placeholder="admin@acme.com" value={email} onChange={(e: any) => setEmail(e.target.value)} /></div>
+            <div><label className="text-xs text-gray-500 mb-1 block">Password</label><Input type="password" placeholder="Password" value={password} onChange={(e: any) => setPassword(e.target.value)} /></div>
+            <div><label className="text-xs text-gray-500 mb-1 block">Plan</label>
+              <select value={plan} onChange={(e: any) => setPlan(e.target.value)} className="w-full h-10 rounded-md border border-gray-300 bg-white px-3 text-sm">
+                <option value="free">Free</option>
+                <option value="starter">Starter</option>
+                <option value="pro">Pro</option>
+                <option value="enterprise">Enterprise</option>
+              </select>
+            </div>
+          </div>
+          <div className="mt-3">
+            <Button onClick={() => { if (name && email && password) createMut.mutate(); }} disabled={createMut.isPending || !name || !email || !password}>
+              {createMut.isPending ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Plus className="w-4 h-4 mr-1" />}Create Tenant
+            </Button>
+          </div>
+        </CardContent></Card>
+      )}
+
+      <Card><CardContent className="p-0">
+        {isLoading ? (
+          <div className="flex items-center justify-center py-12"><Loader2 className="w-6 h-6 animate-spin text-gray-400" /></div>
+        ) : tenants.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-12 text-gray-400">
+            <Users className="w-12 h-12 mb-3 opacity-30" /><p className="text-lg font-medium">No tenants</p><p className="text-sm mt-1">Create a tenant to get started</p>
+          </div>
+        ) : (
+          <Table><TableHeader><TableRow>
+            <TableHead>Name</TableHead><TableHead>Email</TableHead><TableHead>Plan</TableHead><TableHead>API Key</TableHead><TableHead>Created</TableHead><TableHead className="text-right">Actions</TableHead>
+          </TableRow></TableHeader><TableBody>
+            {tenants.map((t: any) => (
+              <TableRow key={t.id}>
+                <TableCell>
+                  <div className="font-medium">{t.name}</div>
+                  <div className="text-xs text-gray-500">{t.slug}</div>
+                </TableCell>
+                <TableCell>{t.email}</TableCell>
+                <TableCell><span className={`px-2 py-1 text-xs rounded-md ${planColors[t.plan] || 'bg-gray-100'}`}>{t.plan}</span></TableCell>
+                <TableCell><code className="text-xs bg-gray-100 px-2 py-1 rounded">{t.apiKey?.substring(0, 20)}...</code></TableCell>
+                <TableCell className="text-sm text-gray-500">{t.createdAt ? formatDate(t.createdAt) : '-'}</TableCell>
+                <TableCell className="text-right">
+                  <div className="flex items-center justify-end gap-2">
+                    <Button variant="outline" size="sm" onClick={() => impersonateMut.mutate(t.id)} disabled={impersonateMut.isPending} title="Login as this tenant">
+                      <LogIn className="w-4 h-4 mr-1" /> Impersonate
+                    </Button>
+                  </div>
+                </TableCell>
               </TableRow>
-            </TableHeader>
-            <TableBody>
-              {isLoading ? (
-                <TableRow>
-                  <TableCell colSpan={7} className="text-center py-12">
-                    <Loader2 className="w-6 h-6 animate-spin mx-auto text-gray-400" />
-                  </TableCell>
-                </TableRow>
-              ) : tenants && tenants.length > 0 ? (
-                tenants.map((tenant) => (
-                  <TableRow key={tenant.id}>
-                    <TableCell className="font-medium">{tenant.name}</TableCell>
-                    <TableCell className="text-gray-500">{tenant.email}</TableCell>
-                    <TableCell>
-                      <Badge variant={planColors[tenant.plan] || 'default'}>{tenant.plan}</Badge>
-                    </TableCell>
-                    <TableCell className="text-center">-</TableCell>
-                    <TableCell>
-                      <Badge variant={tenant.isActive ? 'success' : 'danger'}>
-                        {tenant.isActive ? 'Active' : 'Inactive'}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-gray-500">{formatDate(tenant.createdAt)}</TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex items-center justify-end gap-2">
-                        <Button variant="ghost" size="sm" onClick={() => handleEdit(tenant)}>
-                          <Edit className="w-4 h-4" />
-                        </Button>
-                        <Button variant="ghost" size="sm" onClick={() => setDeleteId(tenant.id)}>
-                          <Trash2 className="w-4 h-4 text-red-500" />
-                        </Button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))
-              ) : (
-                <TableRow>
-                  <TableCell colSpan={7} className="text-center py-12 text-gray-500">
-                    No tenants found.
-                  </TableCell>
-                </TableRow>
-              )}
-            </TableBody>
-          </Table>
-        </CardContent>
-      </Card>
-
-      {/* Create Tenant Dialog */}
-      <Dialog open={addOpen} onOpenChange={setAddOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Create Tenant</DialogTitle>
-            <DialogDescription>Add a new tenant account to the CMP platform.</DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4">
-            <Input label="Company Name" placeholder="Acme Corp" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
-            <Input label="Email" type="email" placeholder="admin@acme.com" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1.5">Plan</label>
-              <Select value={form.plan} onValueChange={(v) => setForm({ ...form, plan: v as 'free' | 'starter' | 'pro' | 'enterprise' })}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="free">Free</SelectItem>
-                  <SelectItem value="starter">Starter</SelectItem>
-                  <SelectItem value="pro">Pro</SelectItem>
-                  <SelectItem value="enterprise">Enterprise</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setAddOpen(false)}>Cancel</Button>
-            <Button onClick={() => { toast.success('Tenant created'); setAddOpen(false); }}>Create Tenant</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Edit Tenant Dialog */}
-      <Dialog open={!!editTenant} onOpenChange={() => setEditTenant(null)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Edit Tenant</DialogTitle>
-            <DialogDescription>Update tenant account details.</DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4">
-            <Input label="Company Name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
-            <Input label="Email" type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1.5">Plan</label>
-              <Select value={form.plan} onValueChange={(v) => setForm({ ...form, plan: v as 'free' | 'starter' | 'pro' | 'enterprise' })}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="free">Free</SelectItem>
-                  <SelectItem value="starter">Starter</SelectItem>
-                  <SelectItem value="pro">Pro</SelectItem>
-                  <SelectItem value="enterprise">Enterprise</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setEditTenant(null)}>Cancel</Button>
-            <Button onClick={handleSaveEdit} disabled={updateMutation.isPending}>
-              {updateMutation.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
-              Save Changes
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Delete Confirmation */}
-      <Dialog open={!!deleteId} onOpenChange={() => setDeleteId(null)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Delete Tenant</DialogTitle>
-            <DialogDescription>Are you sure you want to delete this tenant? All associated data including domains, filters, and quarantined emails will be permanently removed.</DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setDeleteId(null)}>Cancel</Button>
-            <Button variant="destructive" onClick={() => { setDeleteId(null); toast.success('Tenant deleted'); }}>
-              Delete Tenant
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+            ))}
+          </TableBody></Table>
+        )}
+      </CardContent></Card>
     </div>
   );
 }
