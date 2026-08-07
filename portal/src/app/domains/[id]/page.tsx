@@ -92,6 +92,11 @@ export default function DomainDetailPage() {
             <Badge variant={domain.isVerified ? 'success' : 'warning'}>
               {domain.isVerified ? 'Verified' : 'Pending Verification'}
             </Badge>
+            <Link href={`/domains/${domainId}/setup`}>
+              <Button variant="outline" size="sm" className="ml-2 border-blue-300 text-blue-700 hover:bg-blue-50">
+                Setup Wizard
+              </Button>
+            </Link>
           </div>
           <p className="text-sm text-gray-500 mt-1">
             {formatNumber(domain.emailCount)} emails processed · {formatNumber(domain.spamBlocked)} spam blocked

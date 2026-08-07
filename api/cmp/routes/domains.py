@@ -8,6 +8,8 @@ from cmp.schemas.domain import DomainCreate, DomainRead, DomainDetail, DNSCheckR
 from cmp.middleware.auth import get_current_user
 from cmp.middleware.audit import log_audit
 from cmp.services.domain_service import add_domain, verify_domain, remove_domain, list_domains, get_domain_health
+from cmp.services.setup_service import get_setup_check
+from cmp.schemas.setup import SetupCheckResult
 
 router = APIRouter(prefix="/api/v1/domains", tags=["Domains"])
 
@@ -51,3 +53,8 @@ async def verify(domain_id: str, tenant: Tenant = Depends(get_current_user), db:
 @router.get("/{domain_id}/dns-check", response_model=DNSCheckResult)
 async def dns_check(domain_id: str, tenant: Tenant = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     return await get_domain_health(db, domain_id)
+
+
+@router.get("/{domain_id}/setup-check", response_model=SetupCheckResult)
+async def setup_check(domain_id: str, tenant: Tenant = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    return await get_setup_check(db, domain_id)
