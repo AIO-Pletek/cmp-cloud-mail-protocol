@@ -96,6 +96,33 @@ export default function EmailHistoryPage() {
     }
   };
 
+  const getStatusReason = (status: string, message: string) => {
+    if (!message) return null;
+    const msg = message.toLowerCase();
+    
+    // Categorize the reason
+    if (msg.includes('unauthenticated') || msg.includes('spf') || msg.includes('dkim') || msg.includes('dmarc'))
+      return { icon: '🔐', label: 'Authentication Failed', color: 'text-orange-600 bg-orange-50' };
+    if (msg.includes('spam') || msg.includes('blocked') || msg.includes('blacklist') || msg.includes('rbl'))
+      return { icon: '🚫', label: 'Spam/Blacklist', color: 'text-red-600 bg-red-50' };
+    if (msg.includes('virus') || msg.includes('malware') || msg.includes('clamav'))
+      return { icon: '🦠', label: 'Virus Detected', color: 'text-red-600 bg-red-50' };
+    if (msg.includes('user unknown') || msg.includes('no such user') || msg.includes('mailbox not found') || msg.includes('550 5.1.1'))
+      return { icon: '👤', label: 'User Not Found', color: 'text-gray-600 bg-gray-50' };
+    if (msg.includes('connection refused') || msg.includes('lost connection') || msg.includes('timeout') || msg.includes('timed out'))
+      return { icon: '🔌', label: 'Connection Issue', color: 'text-yellow-600 bg-yellow-50' };
+    if (msg.includes('relay') || msg.includes('access denied'))
+      return { icon: '🚫', label: 'Relay Denied', color: 'text-red-600 bg-red-50' };
+    if (msg.includes('quota') || msg.includes('over quota') || msg.includes('mailbox full'))
+      return { icon: '📦', label: 'Mailbox Full', color: 'text-purple-600 bg-purple-50' };
+    if (msg.includes('tls') || msg.includes('ssl') || msg.includes('certificate'))
+      return { icon: '🔒', label: 'TLS/Certificate Issue', color: 'text-orange-600 bg-orange-50' };
+    if (msg.includes('queued') || msg.includes('250 2.0.0') || msg.includes('ok'))
+      return { icon: '✅', label: 'Successfully Delivered', color: 'text-green-600 bg-green-50' };
+    
+    return { icon: 'ℹ️', label: 'Other', color: 'text-gray-600 bg-gray-50' };
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -216,7 +243,7 @@ export default function EmailHistoryPage() {
                   <TableHead>To</TableHead>
                   <TableHead>Domain</TableHead>
                   <TableHead>Status</TableHead>
-                  <TableHead>Relay</TableHead>
+                  <TableHead>Reason</TableHead>
                   <TableHead className="text-right">Size</TableHead>
                 </TableRow>
               </TableHeader>
@@ -241,7 +268,18 @@ export default function EmailHistoryPage() {
                       </button>
                     </TableCell>
                     <TableCell>{getStatusBadge(item.status)}</TableCell>
-                    <TableCell className="text-xs text-gray-500 max-w-[150px] truncate">{item.destination_relay}</TableCell>
+                    <TableCell>
+                      {(() => {
+                        const reason = getStatusReason(item.status, item.statusMessage);
+                        if (!reason) return <span className="text-xs text-gray-400">-</span>;
+                        return (
+                          <div className={`flex items-center gap-1.5 px-2 py-1 rounded-md text-xs ${reason.color}`}>
+                            <span>{reason.icon}</span>
+                            <span className="font-medium">{reason.label}</span>
+                          </div>
+                        );
+                      })()}
+                    </TableCell>
                     <TableCell className="text-right text-sm text-gray-500">{item.size_bytes ? `${(item.size_bytes / 1024).toFixed(1)} KB` : '-'}</TableCell>
                   </TableRow>
                 ))}
