@@ -15,8 +15,13 @@ import {
   ChevronLeft,
   ChevronRight,
   List,
+  Send,
+  ShieldCheck,
+  ShieldAlert,
   ClipboardList,
-} from 'lucide-react';
+  Bell,
+  Key,
+} from "lucide-react";
 import { useState } from 'react';
 
 const navItems = [
@@ -25,8 +30,15 @@ const navItems = [
   { href: '/filters', label: 'Filter Rules', icon: Shield },
   { href: '/quarantine', label: 'Quarantine', icon: MailWarning },
   { href: '/queue', label: 'Mail Queue', icon: List },
+  { href: '/relay', label: 'Outgoing Relay', icon: Send },
+  { href: '/trusted-hosts', label: 'Trusted Hosts', icon: ShieldCheck },
+  { href: '/gateway', label: 'Enterprise Gateway', icon: ShieldAlert },
+  { href: '/access-lists', label: 'Whitelist & Blocklist', icon: ShieldCheck },
+  { href: '/gateway/smtp-auth', label: 'SMTP Auth', icon: Key },
   { href: '/reports', label: 'Reports', icon: BarChart3 },
+  { href: '/email-history', label: 'Email History', icon: Mail },
   { href: '/audit', label: 'Audit Log', icon: ClipboardList },
+  { href: '/notifications', label: 'Notifications', icon: Bell },
   { href: '/settings', label: 'Settings', icon: Settings },
 ];
 
