@@ -81,8 +81,13 @@ export function Header() {
         </div>
       </div>
 
-      {/* Right: Notifications + User */}
+      {/* Right: Back to Admin + Notifications + User */}
       <div className="flex items-center gap-4">
+        {isImpersonating && (
+          <button onClick={returnToAdmin} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-yellow-500 hover:bg-yellow-600 rounded-lg transition-colors shadow-sm">
+            <ArrowLeft className="w-4 h-4" /> Back to Admin
+          </button>
+        )}
         <button className="relative p-2 rounded-lg hover:bg-gray-100 transition-colors">
           <Bell className="w-5 h-5 text-gray-500" />
         </button>
