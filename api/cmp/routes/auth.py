@@ -17,7 +17,7 @@ router = APIRouter(prefix="/api/v1/auth", tags=["Authentication"])
 async def register(req: RegisterRequest, request: Request, db: AsyncSession = Depends(get_db)):
     tenant = await register_tenant(db, req)
     await log_audit(db, tenant.id, tenant.email, "register", "tenant", tenant.id, ip_address=request.client.host if request.client else None)
-    return tenant
+    return TenantRead.model_validate(tenant, from_attributes=True).model_dump(by_alias=True)
 
 
 @router.post("/login")
@@ -27,10 +27,10 @@ async def login(req: LoginRequest, request: Request, db: AsyncSession = Depends(
     tokens = create_token_pair(tenant)
     tenant_data = TenantRead.model_validate(tenant)
     return {
-        "accessToken": tokens.access_token,
-        "refreshToken": tokens.refresh_token,
+        "accessToken": tokens.accessToken,
+        "refreshToken": tokens.refreshToken,
         "tokenType": tokens.token_type,
-        "user": tenant_data.model_dump()
+        "user": tenant_data.model_dump(by_alias=True)
     }
 
 
@@ -60,4 +60,4 @@ async def change_password(
 
 @router.get("/me", response_model=TenantRead)
 async def get_me(tenant: Tenant = Depends(get_current_user)):
-    return tenant
+    return TenantRead.model_validate(tenant, from_attributes=True).model_dump(by_alias=True)

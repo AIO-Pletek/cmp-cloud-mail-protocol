@@ -12,6 +12,7 @@ import { Plus, Loader2, LogIn, Users, Shield, Globe } from 'lucide-react';
 import { formatDate } from '@/lib/utils';
 import toast from 'react-hot-toast';
 import { useRouter } from 'next/navigation';
+import { useAuth } from '@/lib/auth';
 
 function getToken() { return typeof window !== 'undefined' ? localStorage.getItem('cmp_access_token') || '' : ''; }
 const apiGet = async (url: string) => { const r = await fetch('/api/v1' + url, { headers: { 'Authorization': 'Bearer ' + getToken() } }); return r.json(); };
@@ -19,6 +20,7 @@ const apiPost = async (url: string, body: any) => { const r = await fetch('/api/
 
 export default function TenantsPage() {
   const qc = useQueryClient();
+  const { login } = useAuth();
   const router = useRouter();
   const [showAdd, setShowAdd] = useState(false);
   const [name, setName] = useState('');
@@ -55,9 +57,15 @@ export default function TenantsPage() {
     },
     onSuccess: (data: any) => {
       if (data.accessToken) {
+        const adminToken = getToken();
+        const adminRefresh = localStorage.getItem('cmp_refresh_token') || '';
+        localStorage.setItem('cmp_admin_access_token', adminToken);
+        localStorage.setItem('cmp_admin_refresh_token', adminRefresh);
         localStorage.setItem('cmp_access_token', data.accessToken);
         localStorage.setItem('cmp_refresh_token', data.refreshToken);
-        toast.success('Impersonating: ' + data.user.email + ' (by ' + data.impersonatedBy + ')');
+        localStorage.setItem('cmp_impersonating', 'true');
+        localStorage.setItem('cmp_impersonated_by', data.impersonatedBy);
+        toast.success('Impersonating: ' + data.user.email);
         setTimeout(() => { window.location.href = '/dashboard'; }, 500);
       } else {
         toast.error(data.detail || 'Impersonate failed');

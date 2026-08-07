@@ -24,7 +24,7 @@ const pageTitles: Record<string, string> = {
 };
 
 export function Header() {
-  const { user, logout } = useAuth();
+  const { user, logout, isImpersonating, impersonatedBy, returnToAdmin } = useAuth();
   const pathname = usePathname();
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -46,6 +46,9 @@ export function Header() {
 
   return (
     <header className="h-16 border-b border-gray-200 bg-white flex items-center justify-between px-6 sticky top-0 z-30">
+      {isImpersonating && (
+        <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-yellow-400 via-orange-400 to-red-400"></div>
+      )}
       {/* Left: Back button + Breadcrumb */}
       <div className="flex items-center gap-3">
         {/* Back button - visible on sub-pages */}
