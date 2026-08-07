@@ -57,8 +57,8 @@ export default function TenantsPage() {
       if (data.accessToken) {
         localStorage.setItem('cmp_access_token', data.accessToken);
         localStorage.setItem('cmp_refresh_token', data.refreshToken);
-        toast.success('Impersonating: ' + data.user.email);
-        router.push('/dashboard');
+        toast.success('Impersonating: ' + data.user.email + ' (by ' + data.impersonatedBy + ')');
+        setTimeout(() => { window.location.href = '/dashboard'; }, 500);
       } else {
         toast.error(data.detail || 'Impersonate failed');
       }

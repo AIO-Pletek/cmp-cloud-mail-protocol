@@ -147,12 +147,11 @@ async def impersonate_tenant(
     tenant = result.scalar_one_or_none()
     if not tenant:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
-    from cmp.services.auth_service import create_access_token, create_refresh_token
-    access_token = create_access_token(data={"sub": tenant.id})
-    refresh_token = create_refresh_token(data={"sub": tenant.id})
+    from cmp.services.auth_service import create_token_pair
+    tokens = create_token_pair(tenant)
     return {
-        "accessToken": access_token,
-        "refreshToken": refresh_token,
+        "accessToken": tokens.accessToken,
+        "refreshToken": tokens.refreshToken,
         "user": {
             "id": tenant.id,
             "name": tenant.name,
