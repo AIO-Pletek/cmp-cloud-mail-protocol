@@ -15,6 +15,7 @@ import {
   ChevronLeft,
   ChevronRight,
   List,
+  ClipboardList,
 } from 'lucide-react';
 import { useState } from 'react';
 
@@ -25,6 +26,7 @@ const navItems = [
   { href: '/quarantine', label: 'Quarantine', icon: MailWarning },
   { href: '/queue', label: 'Mail Queue', icon: List },
   { href: '/reports', label: 'Reports', icon: BarChart3 },
+  { href: '/audit', label: 'Audit Log', icon: ClipboardList },
   { href: '/settings', label: 'Settings', icon: Settings },
 ];
 

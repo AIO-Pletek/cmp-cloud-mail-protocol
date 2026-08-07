@@ -177,6 +177,18 @@ export const cmpApi = {
     deleteOne: (id: string) => api.delete(`/queue/${id}`).then((r) => r.data),
     deleteAll: () => api.delete('/queue').then((r) => r.data),
   },
+  audit: {
+    list: (params?: {
+      page?: number;
+      per_page?: number;
+      action?: string;
+      user_email?: string;
+      resource_type?: string;
+      date_from?: string;
+      date_to?: string;
+    }) =>
+      api.get<{ items: any[]; total: number; page: number; perPage: number }>('/audit', { params }).then((r) => r.data),
+  },
 };
 
 export default api;
