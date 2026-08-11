@@ -2,108 +2,72 @@
 
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
-import { Switch } from '@/components/ui/switch';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
-import {
-  Shield, RefreshCw, Loader2, Plus, Trash2, Copy, CheckCircle, XCircle,
-  RotateCw, Download, Key, Archive, FileCheck, AlertTriangle, Building2
-} from 'lucide-react';
+import { Shield, RefreshCw, Loader2, Plus, Trash2, Copy, CheckCircle, XCircle, AlertTriangle, Key, Building2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://mailprotocol.cbncloud.net/api/v1';
+function getToken() { return typeof window !== 'undefined' ? localStorage.getItem('cmp_access_token') || '' : ''; }
+const H = () => ({ 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getToken() });
+const BASE = '/api/v1/enterprise';
 
-function authHeaders(): Record<string, string> {
-  const token = typeof window !== 'undefined' ? localStorage.getItem('cmp_access_token') : '';
-  return { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
-}
-
-async function apiFetch(path: string, opts: RequestInit = {}) {
-  const res = await fetch(`${API_URL}/enterprise${path}`, {
-    ...opts,
-    headers: { ...authHeaders(), ...(opts.headers || {}) },
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || `Request failed: ${res.status}`);
+const apiFetch = async (path: string, opts: RequestInit = {}) => {
+  const r = await fetch(BASE + path, { headers: H() as any, ...opts });
+  if (!r.ok) {
+    const text = await r.text();
+    throw new Error(text || r.statusText);
   }
-  return res.json();
-}
-
-// ─── camelCase conversion (matches axios interceptor behaviour) ───────────────
-function toCamel(obj: any): any {
-  if (!obj || typeof obj !== 'object') return obj;
-  if (Array.isArray(obj)) return obj.map(toCamel);
-  return Object.fromEntries(
-    Object.entries(obj).map(([k, v]) => [
-      k.replace(/_([a-z])/g, (_, c) => c.toUpperCase()),
-      toCamel(v),
-    ])
-  );
-}
-
-async function apiFetchC(path: string, opts: RequestInit = {}) {
-  return toCamel(await apiFetch(path, opts));
-}
+  return r.json();
+};
 
 const TABS = [
   { id: 'dlp', label: 'DLP Rules', icon: Shield },
   { id: 'dkim', label: 'DKIM Rotation', icon: Key },
-  { id: 'archiving', label: 'Email Archiving', icon: Archive },
-  { id: 'compliance', label: 'Compliance', icon: FileCheck },
+  { id: 'archiving', label: 'Archiving', icon: Building2 },
+  { id: 'compliance', label: 'Compliance', icon: CheckCircle },
 ];
 
-// ─── DLP ──────────────────────────────────────────────────────────────────────
+// ── DLP ──────────────────────────────────────────────────
 function DLPTab() {
   const qc = useQueryClient();
   const [showAdd, setShowAdd] = useState(false);
-  const [form, setForm] = useState({ name: '', pattern: '', action: 'block', description: '' });
+  const [form, setForm] = useState({ name: '', pattern: '', action: 'tag', description: '' });
 
-  const { data: rules = [], isLoading } = useQuery({
-    queryKey: ['enterprise-dlp'],
-    queryFn: () => apiFetchC('/dlp'),
-  } as any);
+  const { data, isLoading } = useQuery({ queryKey: ['dlp'], queryFn: () => apiFetch('/dlp') });
+  const systemRules: any[] = data?.system_rules || [];
+  const customRules: any[] = data?.custom_rules || [];
 
-  const addMutation = useMutation({
-    mutationFn: (data: any) =>
-      apiFetch('/dlp', { method: 'POST', body: JSON.stringify(data) }),
-    onSuccess: () => {
-      toast.success('Rule added');
-      qc.invalidateQueries({ queryKey: ['enterprise-dlp'] });
-      setShowAdd(false);
-      setForm({ name: '', pattern: '', action: 'block', description: '' });
-    },
+  const addMut = useMutation({
+    mutationFn: (d: any) => apiFetch('/dlp', { method: 'POST', body: JSON.stringify(d) }),
+    onSuccess: () => { toast.success('Rule added'); qc.invalidateQueries({ queryKey: ['dlp'] }); setShowAdd(false); setForm({ name: '', pattern: '', action: 'tag', description: '' }); },
     onError: (e: any) => toast.error(e.message),
   });
 
-  const deleteMutation = useMutation({
-    mutationFn: (id: number) => apiFetch(`/dlp/${id}`, { method: 'DELETE' }),
-    onSuccess: () => { toast.success('Rule deleted'); qc.invalidateQueries({ queryKey: ['enterprise-dlp'] }); },
-    onError: (e: any) => toast.error(e.message),
+  const delMut = useMutation({
+    mutationFn: (id: string) => apiFetch('/dlp/' + id, { method: 'DELETE' }),
+    onSuccess: () => { toast.success('Deleted'); qc.invalidateQueries({ queryKey: ['dlp'] }); },
   });
 
-  const syncMutation = useMutation({
+  const syncMut = useMutation({
     mutationFn: () => apiFetch('/dlp/sync', { method: 'POST' }),
-    onSuccess: (d: any) => toast.success(`Synced ${d.synced} rule(s) to Rspamd`),
+    onSuccess: (d: any) => toast.success('Synced ' + (d.synced || 0) + ' rules to Rspamd'),
     onError: (e: any) => toast.error(e.message),
   });
 
-  const actionColors: Record<string, string> = {
-    block: 'text-red-700 bg-red-50 border-red-200',
-    quarantine: 'text-orange-700 bg-orange-50 border-orange-200',
-    tag: 'text-blue-700 bg-blue-50 border-blue-200',
+  const actionBadge: Record<string, string> = {
+    block: 'danger', tag: 'info', quarantine: 'warning',
   };
 
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <p className="text-sm text-gray-500">Regex-based content scanning rules applied at SMTP time via Rspamd.</p>
+        <p className="text-sm text-gray-500">Regex-based DLP rules applied via Rspamd at SMTP time.</p>
         <div className="flex gap-2">
-          <Button variant="outline" size="sm" onClick={() => syncMutation.mutate()} disabled={syncMutation.isPending}>
-            {syncMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <RefreshCw className="w-4 h-4 mr-1" />}
+          <Button variant="outline" size="sm" onClick={() => syncMut.mutate()} disabled={syncMut.isPending}>
+            {syncMut.isPending ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <RefreshCw className="w-4 h-4 mr-1" />}
             Sync to Rspamd
           </Button>
           <Button size="sm" onClick={() => setShowAdd(!showAdd)}><Plus className="w-4 h-4 mr-1" />Add Rule</Button>
@@ -113,448 +77,298 @@ function DLPTab() {
       {showAdd && (
         <Card><CardContent className="p-4 space-y-3">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <div>
-              <label className="text-xs text-gray-500 mb-1 block">Rule Name</label>
-              <Input placeholder="Credit Card Numbers" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} />
-            </div>
-            <div>
-              <label className="text-xs text-gray-500 mb-1 block">Action</label>
-              <select
-                className="w-full h-10 rounded-md border border-gray-200 bg-white px-3 py-2 text-sm"
-                value={form.action}
-                onChange={e => setForm({ ...form, action: e.target.value })}
-              >
-                <option value="block">Block</option>
+            <div><label className="text-xs text-gray-500 mb-1 block">Rule Name</label><Input placeholder="Credit Card Pattern" value={form.name} onChange={(e: any) => setForm({ ...form, name: e.target.value })} /></div>
+            <div><label className="text-xs text-gray-500 mb-1 block">Regex Pattern</label><Input placeholder="\\b4[0-9]{12}\\b" value={form.pattern} onChange={(e: any) => setForm({ ...form, pattern: e.target.value })} /></div>
+            <div><label className="text-xs text-gray-500 mb-1 block">Action</label>
+              <select value={form.action} onChange={(e: any) => setForm({ ...form, action: e.target.value })} className="w-full h-10 rounded-md border border-gray-300 bg-white px-3 text-sm">
+                <option value="tag">Tag (add header)</option>
                 <option value="quarantine">Quarantine</option>
-                <option value="tag">Tag</option>
+                <option value="block">Block (reject)</option>
               </select>
             </div>
-            <div>
-              <label className="text-xs text-gray-500 mb-1 block">Regex Pattern</label>
-              <Input placeholder="\b4[0-9]{12}(?:[0-9]{3})?\b" value={form.pattern} onChange={e => setForm({ ...form, pattern: e.target.value })} className="font-mono text-xs" />
-            </div>
-            <div>
-              <label className="text-xs text-gray-500 mb-1 block">Description</label>
-              <Input placeholder="Matches Visa credit card numbers" value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} />
-            </div>
+            <div><label className="text-xs text-gray-500 mb-1 block">Description</label><Input placeholder="PCI-DSS credit card detection" value={form.description} onChange={(e: any) => setForm({ ...form, description: e.target.value })} /></div>
           </div>
-          <div className="flex gap-2 justify-end">
-            <Button variant="outline" size="sm" onClick={() => setShowAdd(false)}>Cancel</Button>
-            <Button size="sm" disabled={!form.name || !form.pattern || addMutation.isPending}
-              onClick={() => addMutation.mutate(form)}>
-              {addMutation.isPending && <Loader2 className="w-4 h-4 animate-spin mr-1" />}Save Rule
-            </Button>
-          </div>
+          <Button onClick={() => form.name && form.pattern && addMut.mutate(form)} disabled={addMut.isPending || !form.name || !form.pattern}>
+            {addMut.isPending ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Plus className="w-4 h-4 mr-1" />}Add DLP Rule
+          </Button>
         </CardContent></Card>
       )}
 
-      <Card><CardContent className="p-0">
-        {isLoading ? (
-          <div className="flex items-center justify-center py-12"><Loader2 className="w-6 h-6 animate-spin text-gray-400" /></div>
-        ) : (rules as any[]).length === 0 ? (
-          <div className="py-12 text-center text-sm text-gray-400">No DLP rules configured yet.</div>
-        ) : (
-          <Table>
-            <TableHeader><TableRow>
-              <TableHead>Name</TableHead>
-              <TableHead>Pattern</TableHead>
-              <TableHead>Action</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead className="text-right">Actions</TableHead>
-            </TableRow></TableHeader>
+      <Card><CardHeader><CardTitle className="text-sm font-medium text-gray-500">System Rules (built-in, always active)</CardTitle></CardHeader>
+        <CardContent className="p-0">
+          <Table><TableHeader><TableRow><TableHead>Name</TableHead><TableHead>Action</TableHead><TableHead>Description</TableHead></TableRow></TableHeader>
             <TableBody>
-              {(rules as any[]).map((r: any) => (
-                <TableRow key={r.id}>
-                  <TableCell className="font-medium">{r.name}</TableCell>
-                  <TableCell><code className="text-xs bg-gray-100 px-1.5 py-0.5 rounded">{r.pattern}</code></TableCell>
-                  <TableCell>
-                    <span className={`text-xs font-medium px-2 py-0.5 rounded border ${actionColors[r.action] || ''}`}>
-                      {r.action}
-                    </span>
-                  </TableCell>
-                  <TableCell>
-                    {r.enabled !== false
-                      ? <Badge variant="success">Active</Badge>
-                      : <Badge variant="outline">Disabled</Badge>}
-                  </TableCell>
+              {isLoading ? <TableRow><TableCell colSpan={3}><Loader2 className="w-4 h-4 animate-spin" /></TableCell></TableRow> :
+                systemRules.map((r: any) => (
+                  <TableRow key={r.id}>
+                    <TableCell className="font-medium">{r.name}</TableCell>
+                    <TableCell><Badge variant={(actionBadge[r.action] || 'default') as any}>{r.action}</Badge></TableCell>
+                    <TableCell className="text-sm text-gray-500">{r.description}</TableCell>
+                  </TableRow>
+                ))}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
+
+      <Card><CardHeader><CardTitle className="text-sm font-medium text-gray-500">Custom Rules</CardTitle></CardHeader>
+        <CardContent className="p-0">
+          {customRules.length === 0 ? (
+            <div className="py-8 text-center text-gray-400 text-sm">No custom rules. Add one above.</div>
+          ) : (
+            <Table><TableHeader><TableRow><TableHead>Name</TableHead><TableHead>Pattern</TableHead><TableHead>Action</TableHead><TableHead className="text-right">Actions</TableHead></TableRow></TableHeader>
+              <TableBody>
+                {customRules.map((r: any) => (
+                  <TableRow key={r.id}>
+                    <TableCell className="font-medium">{r.name}</TableCell>
+                    <TableCell><code className="text-xs bg-gray-100 px-1 py-0.5 rounded">{r.pattern?.substring(0, 40)}...</code></TableCell>
+                    <TableCell><Badge variant={(actionBadge[r.action] || 'default') as any}>{r.action}</Badge></TableCell>
+                    <TableCell className="text-right">
+                      <Button variant="ghost" size="sm" onClick={() => delMut.mutate(r.id)} className="text-red-600"><Trash2 className="w-4 h-4" /></Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+// ── DKIM ──────────────────────────────────────────────────
+function DKIMTab() {
+  const [rotating, setRotating] = useState<string | null>(null);
+  const [result, setResult] = useState<any | null>(null);
+
+  const { data, isLoading } = useQuery({ queryKey: ['dkim'], queryFn: () => apiFetch('/dkim-rotation') });
+  const domains: any[] = data?.domains || [];
+
+  const rotate = async (domain: string) => {
+    setRotating(domain);
+    try {
+      const res = await apiFetch('/dkim-rotation/' + encodeURIComponent(domain), { method: 'POST' });
+      setResult(res);
+      toast.success('New DKIM key generated for ' + domain);
+    } catch (e: any) {
+      toast.error(e.message);
+    } finally {
+      setRotating(null);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <p className="text-sm text-gray-500">Rotate DKIM signing keys. After rotation, add the new TXT record to DNS, then delete the old one after 48h.</p>
+      {result && (
+        <Card className="border-green-200 bg-green-50">
+          <CardContent className="p-4">
+            <p className="text-sm font-semibold text-green-800 mb-2">New key generated — add to DNS:</p>
+            <div className="flex items-start gap-2">
+              <code className="text-xs bg-white border border-green-200 rounded p-2 flex-1 whitespace-pre-wrap">{result.selector}._domainkey.{result.domain} IN TXT {result.dns_record}</code>
+              <Button size="sm" variant="outline" onClick={() => { navigator.clipboard.writeText(result.dns_record); toast.success('Copied'); }}>
+                <Copy className="w-4 h-4" />
+              </Button>
+            </div>
+            <Button size="sm" className="mt-2" variant="outline" onClick={() => setResult(null)}>Dismiss</Button>
+          </CardContent>
+        </Card>
+      )}
+      <Card><CardContent className="p-0">
+        {isLoading ? <div className="py-8 flex justify-center"><Loader2 className="w-6 h-6 animate-spin text-gray-400" /></div> :
+          domains.length === 0 ? <div className="py-8 text-center text-gray-400 text-sm">No domains found. Add a domain first.</div> :
+          <Table><TableHeader><TableRow><TableHead>Domain</TableHead><TableHead>Key Status</TableHead><TableHead className="text-right">Action</TableHead></TableRow></TableHeader>
+            <TableBody>
+              {domains.map((d: any) => (
+                <TableRow key={d.domain}>
+                  <TableCell className="font-medium">{d.domain}</TableCell>
+                  <TableCell>{d.key_exists ? <Badge variant="success">Key exists</Badge> : <Badge variant="warning">No key</Badge>}</TableCell>
                   <TableCell className="text-right">
-                    <Button variant="ghost" size="sm" className="text-red-600"
-                      onClick={() => deleteMutation.mutate(r.id)}>
-                      <Trash2 className="w-4 h-4" />
+                    <Button size="sm" variant="outline" onClick={() => rotate(d.domain)} disabled={rotating === d.domain}>
+                      {rotating === d.domain ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <RefreshCw className="w-4 h-4 mr-1" />}
+                      Rotate Key
                     </Button>
                   </TableCell>
                 </TableRow>
               ))}
             </TableBody>
           </Table>
-        )}
+        }
       </CardContent></Card>
     </div>
   );
 }
 
-// ─── DKIM ─────────────────────────────────────────────────────────────────────
-function DKIMTab() {
-  const qc = useQueryClient();
-  const [newDnsRecord, setNewDnsRecord] = useState<Record<string, any>>({});
-
-  const { data: domains = [], isLoading } = useQuery({
-    queryKey: ['enterprise-dkim'],
-    queryFn: () => apiFetchC('/dkim-rotation'),
-  });
-
-  const rotateMutation = useMutation({
-    mutationFn: (domainId: string) =>
-      apiFetchC(`/dkim-rotation/${domainId}`, { method: 'POST' }),
-    onSuccess: (data: any) => {
-      toast.success('New DKIM key generated — add the DNS record below');
-      setNewDnsRecord(prev => ({ ...prev, [data.domain]: data }));
-      qc.invalidateQueries({ queryKey: ['enterprise-dkim'] });
-    },
-    onError: (e: any) => toast.error(e.message),
-  });
-
-  return (
-    <div className="space-y-4">
-      <p className="text-sm text-gray-500">
-        Dual-key DKIM rotation: a new key is generated and staged. Add the DNS record, then the old key is retired after 7 days.
-      </p>
-
-      {isLoading ? (
-        <div className="flex items-center justify-center py-12"><Loader2 className="w-6 h-6 animate-spin text-gray-400" /></div>
-      ) : (domains as any[]).length === 0 ? (
-        <Card><CardContent className="py-12 text-center text-sm text-gray-400">No domains found.</CardContent></Card>
-      ) : (
-        (domains as any[]).map((d: any) => (
-          <Card key={d.domain}>
-            <CardHeader className="pb-2">
-              <div className="flex items-center justify-between">
-                <CardTitle className="text-base">{d.domain}</CardTitle>
-                <Button size="sm" variant="outline"
-                  disabled={rotateMutation.isPending}
-                  onClick={() => rotateMutation.mutate(d.domainId)}>
-                  {rotateMutation.isPending
-                    ? <Loader2 className="w-4 h-4 animate-spin mr-1" />
-                    : <RotateCw className="w-4 h-4 mr-1" />}
-                  Rotate Key
-                </Button>
-              </div>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
-                <div>
-                  <p className="text-xs text-gray-500 mb-0.5">Active Selector</p>
-                  <code className="text-xs bg-gray-100 px-2 py-1 rounded block">
-                    {d.selector || '—'}
-                  </code>
-                </div>
-                <div>
-                  <p className="text-xs text-gray-500 mb-0.5">Created</p>
-                  <p className="text-xs text-gray-700">{d.createdAt ? new Date(d.createdAt).toLocaleDateString() : '—'}</p>
-                </div>
-                {d.pendingSelector && (
-                  <>
-                    <div>
-                      <p className="text-xs text-orange-600 mb-0.5 font-medium">⏳ Pending Selector</p>
-                      <code className="text-xs bg-orange-50 px-2 py-1 rounded block border border-orange-200">
-                        {d.pendingSelector}
-                      </code>
-                    </div>
-                    <div>
-                      <p className="text-xs text-gray-500 mb-0.5">Pending Created</p>
-                      <p className="text-xs text-gray-700">{d.pendingCreatedAt ? new Date(d.pendingCreatedAt).toLocaleDateString() : '—'}</p>
-                    </div>
-                  </>
-                )}
-              </div>
-
-              {newDnsRecord[d.domain] && (
-                <div className="mt-2 p-3 bg-blue-50 border border-blue-200 rounded-md space-y-2">
-                  <p className="text-xs font-semibold text-blue-800">Add this DNS TXT record:</p>
-                  <p className="text-xs text-blue-700 font-mono">{newDnsRecord[d.domain].dnsName}</p>
-                  <div className="relative">
-                    <pre className="text-xs bg-white border border-blue-200 rounded p-2 overflow-x-auto whitespace-pre-wrap break-all">
-                      {newDnsRecord[d.domain].dnsRecord}
-                    </pre>
-                    <button
-                      className="absolute top-1 right-1 p-1 text-blue-500 hover:text-blue-700"
-                      onClick={() => { navigator.clipboard.writeText(newDnsRecord[d.domain].dnsRecord); toast.success('Copied!'); }}
-                    >
-                      <Copy className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                  <p className="text-xs text-blue-600">{newDnsRecord[d.domain].transitionNote}</p>
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        ))
-      )}
-    </div>
-  );
-}
-
-// ─── Archiving ────────────────────────────────────────────────────────────────
+// ── ARCHIVING ──────────────────────────────────────────────
 function ArchivingTab() {
   const qc = useQueryClient();
-  const [localCfg, setLocalCfg] = useState<any>(null);
-  const [dirty, setDirty] = useState(false);
+  const { data, isLoading } = useQuery({ queryKey: ['archiving'], queryFn: () => apiFetch('/archiving') });
+  const [saving, setSaving] = useState(false);
+  const [cfg, setCfg] = useState<any>(null);
+  const current = cfg ?? data ?? { enabled: false, retention_days: 365, include_attachments: true };
 
-  const { data: cfg, isLoading } = useQuery({
-    queryKey: ['enterprise-archiving'],
-    queryFn: () => apiFetchC('/archiving'),
-    onSuccess: (d: any) => { if (!dirty) setLocalCfg(d); },
-  } as any);
-
-  const current = localCfg ?? cfg ?? {};
-
-  const updateMutation = useMutation({
-    mutationFn: (data: any) =>
-      apiFetch('/archiving', { method: 'PUT', body: JSON.stringify(data) }),
-    onSuccess: () => {
+  const save = async () => {
+    setSaving(true);
+    try {
+      await apiFetch('/archiving', { method: 'PUT', body: JSON.stringify(current) });
       toast.success('Archiving config saved');
-      qc.invalidateQueries({ queryKey: ['enterprise-archiving'] });
-      setDirty(false);
-    },
-    onError: (e: any) => toast.error(e.message),
-  });
+      qc.invalidateQueries({ queryKey: ['archiving'] });
+      setCfg(null);
+    } catch (e: any) {
+      toast.error(e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
 
-  function update(patch: Partial<typeof current>) {
-    setLocalCfg((prev: any) => ({ ...prev, ...patch }));
-    setDirty(true);
-  }
+  if (isLoading) return <div className="py-12 flex justify-center"><Loader2 className="w-6 h-6 animate-spin text-gray-400" /></div>;
 
   return (
     <div className="space-y-4">
-      {isLoading ? (
-        <div className="flex items-center justify-center py-12"><Loader2 className="w-6 h-6 animate-spin text-gray-400" /></div>
-      ) : (
-        <>
-          <Card><CardContent className="p-5 space-y-5">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-gray-900">Enable Email Archiving</p>
-                <p className="text-xs text-gray-500">Store a copy of all inbound and outbound messages</p>
-              </div>
-              <Switch
-                checked={!!current.enabled}
-                onCheckedChange={v => update({ enabled: v })}
-              />
-            </div>
-
-            <div className={current.enabled ? '' : 'opacity-40 pointer-events-none'}>
-              <div className="space-y-4">
-                <div>
-                  <label className="text-sm font-medium text-gray-900 block mb-1">
-                    Retention Period: <span className="text-primary-600">{current.retentionDays ?? 365} days</span>
-                  </label>
-                  <p className="text-xs text-gray-500 mb-2">How long to keep archived emails (30 – 3650 days)</p>
-                  <input
-                    type="range"
-                    min={30}
-                    max={3650}
-                    step={30}
-                    value={current.retentionDays ?? 365}
-                    onChange={e => update({ retentionDays: parseInt(e.target.value) })}
-                    className="w-full accent-primary-600"
-                  />
-                  <div className="flex justify-between text-xs text-gray-400 mt-1">
-                    <span>30 days</span>
-                    <span>1 year</span>
-                    <span>5 years</span>
-                    <span>10 years</span>
-                  </div>
-                </div>
-
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm font-medium text-gray-900">Include Attachments</p>
-                    <p className="text-xs text-gray-500">Archive email attachments alongside message bodies</p>
-                  </div>
-                  <Switch
-                    checked={!!current.includeAttachments}
-                    onCheckedChange={v => update({ includeAttachments: v })}
-                  />
-                </div>
-              </div>
-            </div>
-          </CardContent></Card>
-
-          {current.storageUsedMb !== undefined && (
-            <Card><CardContent className="p-4">
-              <p className="text-xs text-gray-500 mb-1">Archive Storage Used</p>
-              <p className="text-2xl font-bold text-gray-900">
-                {current.storageUsedMb >= 1024
-                  ? `${(current.storageUsedMb / 1024).toFixed(1)} GB`
-                  : `${current.storageUsedMb} MB`}
-              </p>
-              <p className="text-xs text-gray-500">{current.archivePath || '/var/cmp/archive'}</p>
-            </CardContent></Card>
-          )}
-
-          <div className="flex justify-end">
-            <Button
-              disabled={!dirty || updateMutation.isPending}
-              onClick={() => updateMutation.mutate({
-                enabled: current.enabled,
-                retention_days: current.retentionDays,
-                include_attachments: current.includeAttachments,
-              })}
-            >
-              {updateMutation.isPending && <Loader2 className="w-4 h-4 animate-spin mr-1" />}
-              Save Changes
-            </Button>
+      <p className="text-sm text-gray-500">Configure long-term email archiving for compliance and eDiscovery.</p>
+      <Card><CardContent className="p-6 space-y-6">
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="font-medium">Enable Email Archiving</p>
+            <p className="text-sm text-gray-500">Store all email headers and metadata</p>
           </div>
-        </>
-      )}
+          <button onClick={() => setCfg({ ...current, enabled: !current.enabled })}
+            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${current.enabled ? 'bg-blue-600' : 'bg-gray-300'}`}>
+            <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${current.enabled ? 'translate-x-6' : 'translate-x-1'}`} />
+          </button>
+        </div>
+
+        <div>
+          <label className="text-sm font-medium block mb-2">Retention Period (days)</label>
+          <div className="flex items-center gap-3">
+            <input type="range" min="30" max="3650" value={current.retention_days}
+              onChange={(e: any) => setCfg({ ...current, retention_days: parseInt(e.target.value) })}
+              className="flex-1 h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer" />
+            <span className="text-sm font-medium w-20 text-right">{current.retention_days} days</span>
+          </div>
+          <div className="flex justify-between text-xs text-gray-400 mt-1"><span>30d</span><span>1yr</span><span>2yr</span><span>5yr</span><span>10yr</span></div>
+        </div>
+
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="font-medium">Include Attachments</p>
+            <p className="text-sm text-gray-500">Archive email attachments (increases storage usage)</p>
+          </div>
+          <button onClick={() => setCfg({ ...current, include_attachments: !current.include_attachments })}
+            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${current.include_attachments ? 'bg-blue-600' : 'bg-gray-300'}`}>
+            <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${current.include_attachments ? 'translate-x-6' : 'translate-x-1'}`} />
+          </button>
+        </div>
+
+        <div className="bg-gray-50 rounded-lg p-3">
+          <p className="text-xs font-medium text-gray-600 mb-1">Storage Path</p>
+          <code className="text-xs text-gray-500">/var/archive/mail</code>
+        </div>
+
+        <Button onClick={save} disabled={saving} className="w-full">
+          {saving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
+          Save Archiving Config
+        </Button>
+      </CardContent></Card>
     </div>
   );
 }
 
-// ─── Compliance ───────────────────────────────────────────────────────────────
+// ── COMPLIANCE ──────────────────────────────────────────────
 function ComplianceTab() {
-  const { data, isLoading, refetch } = useQuery({
-    queryKey: ['enterprise-compliance'],
-    queryFn: () => apiFetchC('/compliance'),
-  });
+  const { data, isLoading } = useQuery({ queryKey: ['compliance'], queryFn: () => apiFetch('/compliance') });
 
-  const exportMutation = useMutation({
-    mutationFn: () =>
-      apiFetch('/compliance/export', { method: 'POST', body: JSON.stringify({ format: 'json' }) }),
-    onSuccess: (d: any) => {
-      const blob = new Blob([JSON.stringify(d, null, 2)], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `compliance-report-${new Date().toISOString().slice(0, 10)}.json`;
-      a.click();
-      URL.revokeObjectURL(url);
-      toast.success('Report downloaded');
-    },
-    onError: (e: any) => toast.error(e.message),
-  });
+  const StatusIcon = ({ status }: { status: string }) => {
+    if (status === 'pass') return <CheckCircle className="w-5 h-5 text-green-500" />;
+    if (status === 'fail') return <XCircle className="w-5 h-5 text-red-500" />;
+    return <AlertTriangle className="w-5 h-5 text-yellow-500" />;
+  };
 
-  function CheckList({ title, checks, passed, total, status }: any) {
-    const allPass = status === 'compliant';
-    return (
-      <Card>
-        <CardHeader className="pb-2">
-          <div className="flex items-center justify-between">
-            <CardTitle className="text-base">{title}</CardTitle>
-            <span className={`text-xs font-semibold px-2 py-0.5 rounded border ${
-              allPass
-                ? 'text-green-700 bg-green-50 border-green-200'
-                : 'text-orange-700 bg-orange-50 border-orange-200'
-            }`}>
-              {passed}/{total} {allPass ? '✓ Compliant' : 'Partial'}
-            </span>
-          </div>
-        </CardHeader>
-        <CardContent>
-          <ul className="space-y-2">
-            {checks?.map((c: any) => (
-              <li key={c.id} className="flex items-start gap-2 text-sm">
-                {c.passed
-                  ? <CheckCircle className="w-4 h-4 text-green-500 mt-0.5 flex-shrink-0" />
-                  : <XCircle className="w-4 h-4 text-red-400 mt-0.5 flex-shrink-0" />}
-                <div>
-                  <p className={c.passed ? 'text-gray-800' : 'text-gray-600'}>{c.label}</p>
-                  <p className="text-xs text-gray-400">{c.detail}</p>
-                </div>
-              </li>
-            ))}
-          </ul>
-        </CardContent>
-      </Card>
-    );
-  }
+  const statusBadge: Record<string, string> = { pass: 'success', fail: 'danger', info: 'warning' };
 
-  return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-gray-500">Live compliance status based on your current gateway configuration.</p>
-        <div className="flex gap-2">
-          <Button variant="outline" size="sm" onClick={() => refetch()}>
-            <RefreshCw className="w-4 h-4 mr-1" />Refresh
-          </Button>
-          <Button size="sm" onClick={() => exportMutation.mutate()} disabled={exportMutation.isPending}>
-            {exportMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Download className="w-4 h-4 mr-1" />}
-            Export Report
-          </Button>
-        </div>
-      </div>
+  if (isLoading) return <div className="py-12 flex justify-center"><Loader2 className="w-6 h-6 animate-spin text-gray-400" /></div>;
 
-      {isLoading ? (
-        <div className="flex items-center justify-center py-12"><Loader2 className="w-6 h-6 animate-spin text-gray-400" /></div>
-      ) : data ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <CheckList title="GDPR" {...data.gdpr} />
-          <CheckList title="HIPAA" {...data.hipaa} />
-        </div>
-      ) : null}
+  const gdpr: any[] = data?.gdpr || [];
+  const hipaa: any[] = data?.hipaa || [];
 
-      {data && (
-        <Card className="bg-gray-50">
-          <CardContent className="p-4">
-            <div className="flex items-start gap-2 text-xs text-gray-500">
-              <AlertTriangle className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" />
-              <p>
-                Compliance checks are automated indicators based on gateway configuration.
-                Full regulatory compliance requires legal review and may involve additional controls outside this system.
-              </p>
-            </div>
-          </CardContent>
-        </Card>
-      )}
-    </div>
-  );
-}
-
-// ─── Main Page ────────────────────────────────────────────────────────────────
-export default function EnterprisePage() {
-  const [activeTab, setActiveTab] = useState('dlp');
+  const score = (items: any[]) => {
+    const pass = items.filter(i => i.status === 'pass').length;
+    return { pass, total: items.length, pct: items.length ? Math.round(pass / items.length * 100) : 0 };
+  };
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
-            <Building2 className="w-6 h-6 text-primary-600" />
-            Enterprise Features
-          </h2>
-          <p className="text-sm text-gray-500">DLP, DKIM rotation, archiving and compliance</p>
-        </div>
+      <p className="text-sm text-gray-500">Real-time compliance status against regulatory frameworks.</p>
+
+      <div className="grid grid-cols-2 gap-4">
+        {[{ name: 'GDPR', items: gdpr }, { name: 'HIPAA', items: hipaa }].map(({ name, items }) => {
+          const s = score(items);
+          return (
+            <Card key={name}>
+              <CardContent className="p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <p className="font-semibold">{name}</p>
+                  <span className={`text-lg font-bold ${s.pct >= 80 ? 'text-green-600' : s.pct >= 60 ? 'text-yellow-600' : 'text-red-600'}`}>{s.pct}%</span>
+                </div>
+                <div className="w-full bg-gray-200 rounded-full h-2 mb-3">
+                  <div className={`h-2 rounded-full ${s.pct >= 80 ? 'bg-green-500' : s.pct >= 60 ? 'bg-yellow-500' : 'bg-red-500'}`} style={{ width: s.pct + '%' }} />
+                </div>
+                <p className="text-xs text-gray-500">{s.pass}/{s.total} checks passed</p>
+              </CardContent>
+            </Card>
+          );
+        })}
       </div>
 
-      {/* Tabs */}
-      <div className="border-b border-gray-200">
-        <nav className="-mb-px flex gap-6">
-          {TABS.map(tab => {
-            const Icon = tab.icon;
-            const active = activeTab === tab.id;
-            return (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
-                className={`flex items-center gap-1.5 pb-3 text-sm font-medium border-b-2 transition-colors ${
-                  active
-                    ? 'border-primary-600 text-primary-600'
-                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                }`}
-              >
-                <Icon className="w-4 h-4" />
-                {tab.label}
-              </button>
-            );
-          })}
-        </nav>
+      {[{ name: 'GDPR', items: gdpr }, { name: 'HIPAA', items: hipaa }].map(({ name, items }) => (
+        <Card key={name}>
+          <CardHeader><CardTitle className="text-sm font-medium">{name} Checklist</CardTitle></CardHeader>
+          <CardContent className="p-0">
+            <Table><TableBody>
+              {items.map((item: any, i: number) => (
+                <TableRow key={i}>
+                  <TableCell className="w-8"><StatusIcon status={item.status} /></TableCell>
+                  <TableCell className="font-medium text-sm">{item.check}</TableCell>
+                  <TableCell className="text-sm text-gray-500">{item.detail}</TableCell>
+                  <TableCell><Badge variant={(statusBadge[item.status] || 'default') as any}>{item.status}</Badge></TableCell>
+                </TableRow>
+              ))}
+            </TableBody></Table>
+          </CardContent>
+        </Card>
+      ))}
+    </div>
+  );
+}
+
+// ── MAIN PAGE ──────────────────────────────────────────────
+export default function EnterprisePage() {
+  const [tab, setTab] = useState('dlp');
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h2 className="text-2xl font-bold text-gray-900">Enterprise Features</h2>
+        <p className="text-sm text-gray-500 mt-1">DLP, DKIM rotation, archiving, and compliance tools</p>
       </div>
 
-      {/* Tab content */}
-      {activeTab === 'dlp' && <DLPTab />}
-      {activeTab === 'dkim' && <DKIMTab />}
-      {activeTab === 'archiving' && <ArchivingTab />}
-      {activeTab === 'compliance' && <ComplianceTab />}
+      <div className="flex gap-2 flex-wrap">
+        {TABS.map(t => (
+          <button key={t.id} onClick={() => setTab(t.id)}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${tab === t.id ? 'bg-blue-100 text-blue-700 border border-blue-200' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
+            <t.icon className="w-4 h-4" />
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      <div>
+        {tab === 'dlp' && <DLPTab />}
+        {tab === 'dkim' && <DKIMTab />}
+        {tab === 'archiving' && <ArchivingTab />}
+        {tab === 'compliance' && <ComplianceTab />}
+      </div>
     </div>
   );
 }
