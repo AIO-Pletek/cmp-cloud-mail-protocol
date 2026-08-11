@@ -32,6 +32,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const checkAuth = useCallback(async () => {
     const token = localStorage.getItem('cmp_access_token');
+    const impersonating = localStorage.getItem('cmp_impersonating') === 'true';
+    const impBy = localStorage.getItem('cmp_impersonated_by');
+    const adminAccess = localStorage.getItem('cmp_admin_access_token');
+    const adminRefresh = localStorage.getItem('cmp_admin_refresh_token');
+    
+    if (impersonating) {
+      setIsImpersonating(true);
+      setImpersonatedBy(impBy);
+      if (adminAccess && adminRefresh) {
+        setAdminTokens({ access: adminAccess, refresh: adminRefresh });
+      }
+    }
+    
     if (!token) {
       setIsLoading(false);
       return;
@@ -73,6 +86,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (adminTokens) {
       localStorage.setItem('cmp_access_token', adminTokens.access);
       localStorage.setItem('cmp_refresh_token', adminTokens.refresh);
+      localStorage.removeItem('cmp_impersonating');
+      localStorage.removeItem('cmp_impersonated_by');
+      localStorage.removeItem('cmp_admin_access_token');
+      localStorage.removeItem('cmp_admin_refresh_token');
       setIsImpersonating(false);
       setImpersonatedBy(null);
       setAdminTokens(null);
@@ -88,6 +105,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const logout = () => {
     localStorage.removeItem('cmp_access_token');
     localStorage.removeItem('cmp_refresh_token');
+    localStorage.removeItem('cmp_impersonating');
+    localStorage.removeItem('cmp_impersonated_by');
+    localStorage.removeItem('cmp_admin_access_token');
+    localStorage.removeItem('cmp_admin_refresh_token');
     setUser(null);
     setIsImpersonating(false);
     setImpersonatedBy(null);
