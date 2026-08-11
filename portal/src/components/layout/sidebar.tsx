@@ -13,9 +13,21 @@ import { useState } from 'react';
 
 const tenantNavItems = [
   { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
-  { href: '/domains', label: 'My Domains', icon: Globe },
-  { href: '/email-history', label: 'Email History', icon: Mail },
+  { href: '/domains', label: 'Domains', icon: Globe },
+  { href: '/filters', label: 'Filter Rules', icon: Shield },
+  { href: '/quarantine', label: 'Quarantine', icon: MailWarning },
+  { href: '/queue', label: 'Mail Queue', icon: List },
+  { href: '/relay', label: 'Outgoing Relay', icon: Send },
+  { href: '/trusted-hosts', label: 'Trusted Hosts', icon: ShieldCheck },
+  { href: '/gateway', label: 'Enterprise Gateway', icon: ShieldAlert },
+  { href: '/access-lists', label: 'Whitelist & Blocklist', icon: ShieldCheck },
+  { href: '/gateway/smtp-auth', label: 'SMTP Auth', icon: Key },
   { href: '/reports', label: 'Reports', icon: BarChart3 },
+  { href: '/email-history', label: 'Email History', icon: Mail },
+  { href: '/scheduled-reports', label: 'Scheduled Reports', icon: BarChart3 },
+  { href: '/notifications', label: 'Notifications', icon: Bell },
+  { href: '/audit', label: 'Audit Log', icon: ClipboardList },
+  { href: '/attachment-policy', label: 'Attachment Policy', icon: Paperclip },
   { href: '/settings', label: 'Settings', icon: Settings },
 ];
 
