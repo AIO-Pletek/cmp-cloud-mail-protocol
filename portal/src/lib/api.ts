@@ -193,6 +193,27 @@ export const cmpApi = {
     remove: (id: string) => api.delete('/scheduled-reports/' + id).then((r) => r.data),
     test: (id: string) => api.post('/scheduled-reports/' + id + '/test').then((r) => r.data),
   },
+  enterprise: {
+    features: () => api.get('/enterprise/features').then((r) => r.data),
+    dlp: {
+      list: () => api.get('/enterprise/dlp').then((r) => r.data),
+      add: (data: any) => api.post('/enterprise/dlp', data).then((r) => r.data),
+      remove: (id: number) => api.delete('/enterprise/dlp/' + id).then((r) => r.data),
+      sync: () => api.post('/enterprise/dlp/sync').then((r) => r.data),
+    },
+    dkim: {
+      list: () => api.get('/enterprise/dkim-rotation').then((r) => r.data),
+      rotate: (domainId: string) => api.post('/enterprise/dkim-rotation/' + domainId).then((r) => r.data),
+    },
+    archiving: {
+      get: () => api.get('/enterprise/archiving').then((r) => r.data),
+      update: (data: any) => api.put('/enterprise/archiving', data).then((r) => r.data),
+    },
+    compliance: {
+      get: () => api.get('/enterprise/compliance').then((r) => r.data),
+      export: () => api.post('/enterprise/compliance/export', { format: 'json' }).then((r) => r.data),
+    },
+  },
 };
 
 export default api;

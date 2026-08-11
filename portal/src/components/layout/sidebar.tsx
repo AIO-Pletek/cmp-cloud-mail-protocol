@@ -7,7 +7,7 @@ import { useAuth } from '@/lib/auth';
 import {
   LayoutDashboard, Globe, Shield, MailWarning, BarChart3, Settings, Users, Mail,
   ChevronLeft, ChevronRight, List, Send, ShieldCheck, ShieldAlert, ClipboardList,
-  Bell, Key, ArrowLeft,
+  Bell, Key, ArrowLeft, Paperclip,Building2,
 } from "lucide-react";
 import { useState } from 'react';
 
@@ -34,6 +34,8 @@ const adminNavItems = [
   { href: '/email-history', label: 'Email History', icon: Mail },
   { href: '/scheduled-reports', label: 'Scheduled Reports', icon: BarChart3 },
   { href: '/audit', label: 'Audit Log', icon: ClipboardList },
+  { href: '/enterprise', label: 'Enterprise', icon: Building2 },
+  { href: '/attachment-policy', label: 'Attachment Policy', icon: Paperclip },
   { href: '/notifications', label: 'Notifications', icon: Bell },
   { href: '/settings', label: 'Settings', icon: Settings },
 ];

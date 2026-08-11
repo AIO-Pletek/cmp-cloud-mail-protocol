@@ -3,7 +3,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from cmp.database import engine, Base
 from cmp.models import Tenant, Domain, FilterRule, Quarantine, AuditLog
-from cmp.routes import auth, tenants, domains, filters, quarantine, reports, queue, audit, webhooks, scheduled_reports
+from cmp.routes import auth, tenants, domains, attachment_policy, enterprise, filters, quarantine, reports, queue, relay, trusted_hosts, gateway, smtp_auth, email_logs, access_lists, audit, webhooks, alerts
 
 
 @asynccontextmanager
@@ -36,9 +36,17 @@ app.include_router(filters.router)
 app.include_router(quarantine.router)
 app.include_router(reports.router)
 app.include_router(queue.router)
+app.include_router(relay.router)
+app.include_router(trusted_hosts.router)
+app.include_router(gateway.router)
+app.include_router(smtp_auth.router)
+app.include_router(email_logs.router)
+app.include_router(access_lists.router)
 app.include_router(audit.router)
 app.include_router(webhooks.router)
-app.include_router(scheduled_reports.router)
+app.include_router(alerts.router)
+app.include_router(attachment_policy.router)
+app.include_router(enterprise.router)
 
 
 @app.get("/health", tags=["Health"])
