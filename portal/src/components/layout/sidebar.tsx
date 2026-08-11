@@ -35,6 +35,7 @@ const adminNavItems = [
   { href: '/scheduled-reports', label: 'Scheduled Reports', icon: BarChart3 },
   { href: '/audit', label: 'Audit Log', icon: ClipboardList },
   { href: '/enterprise', label: 'Enterprise', icon: Building2 },
+  { href: '/policy-engine', label: 'Policy Engine', icon: Shield },
   { href: '/attachment-policy', label: 'Attachment Policy', icon: Paperclip },
   { href: '/notifications', label: 'Notifications', icon: Bell },
   { href: '/settings', label: 'Settings', icon: Settings },
