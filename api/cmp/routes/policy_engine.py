@@ -225,3 +225,88 @@ async def evaluate_policy(req: EvaluateRequest, tenant=Depends(get_current_user)
         )
 
     return decision.to_dict()
+
+# ---------------------------------------------------------------------------
+# Policy Settings
+# ---------------------------------------------------------------------------
+
+from cmp.policy.policy_store import (
+    load_policy_settings, save_policy_settings,
+    update_global_whitelist, update_personal_whitelist,
+    update_cro_account, toggle_personal_whitelist
+)
+
+
+class PolicySettings(BaseModel):
+    require_attachment_password: bool = True
+    fail_closed_on_inspection_failure: bool = True
+    priority_order: list = ["attachment_security","cro","personal_whitelist","global_whitelist","default"]
+    inbound_default_action: str = "quarantine"
+    outbound_default_action: str = "bounce"
+    notify_recipient_on_quarantine: bool = True
+    bounce_message: str = "Email not permitted: recipient not in approved whitelist."
+    quarantine_message: str = "Email held for review: sender not in approved whitelist."
+    description: str = ""
+
+
+@router.get("/settings")
+async def get_settings(tenant=Depends(get_current_user)):
+    return await load_policy_settings(tenant.id)
+
+
+@router.put("/settings")
+async def update_settings(req: PolicySettings, tenant=Depends(get_current_user)):
+    data = req.model_dump()
+    return await save_policy_settings(tenant.id, data)
+
+
+# ---------------------------------------------------------------------------
+# Edit endpoints
+# ---------------------------------------------------------------------------
+
+class GlobalWLUpdate(BaseModel):
+    pattern: str
+    description: Optional[str] = ""
+
+
+class PersonalWLUpdate(BaseModel):
+    allowed: str
+    description: Optional[str] = ""
+
+
+class CROUpdate(BaseModel):
+    account_pattern: str
+    branch_name: Optional[str] = ""
+    description: Optional[str] = ""
+
+
+@router.put("/global-whitelist/{entry_id}")
+async def edit_gw(entry_id: str, req: GlobalWLUpdate, tenant=Depends(require_admin)):
+    result = await update_global_whitelist(entry_id, tenant.id, req.pattern, req.description or "")
+    if not result:
+        raise HTTPException(status_code=404, detail="Entry not found")
+    return result
+
+
+@router.put("/personal-whitelist/{entry_id}")
+async def edit_pw(entry_id: str, req: PersonalWLUpdate, tenant=Depends(get_current_user)):
+    result = await update_personal_whitelist(entry_id, tenant.id, req.allowed, req.description or "")
+    if not result:
+        raise HTTPException(status_code=404, detail="Entry not found")
+    return result
+
+
+@router.put("/personal-whitelist/{entry_id}/toggle")
+async def toggle_pw(entry_id: str, body: ToggleBody, tenant=Depends(get_current_user)):
+    result = await toggle_personal_whitelist(entry_id, tenant.id, body.enabled)
+    if not result:
+        raise HTTPException(status_code=404, detail="Entry not found")
+    return result
+
+
+@router.put("/cro-accounts/{entry_id}")
+async def edit_cro(entry_id: str, req: CROUpdate, tenant=Depends(require_admin)):
+    result = await update_cro_account(entry_id, tenant.id, req.account_pattern, req.branch_name or "", req.description or "")
+    if not result:
+        raise HTTPException(status_code=404, detail="Entry not found")
+    return result
