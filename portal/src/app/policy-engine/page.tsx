@@ -21,6 +21,7 @@ const apiFetch = async (path: string, opts: RequestInit = {}) => {
 
 const TABS = [
   { id: 'global', label: 'Global Whitelist', icon: Globe },
+  { id: 'domain-policy', label: 'Domain Allow / Block', icon: Shield },
   { id: 'personal', label: 'Personal Whitelist', icon: User },
   { id: 'cro', label: 'CRO Accounts', icon: Building2 },
   { id: 'settings', label: 'Policy Settings', icon: SettingsIcon },
@@ -483,6 +484,180 @@ function TestTab() {
   );
 }
 
+// ── Tenant Domain Allow / Block ─────────────────────────
+function DomainPolicyTab() {
+  const qc = useQueryClient();
+  const [mode, setMode] = useState('allow_all');
+  const [pendingMode, setPendingMode] = useState('allow_all');
+  const [action, setAction] = useState('allow');
+  const [pattern, setPattern] = useState('');
+  const [description, setDescription] = useState('');
+
+  const { data, isLoading } = useQuery({
+    queryKey: ['domain-policy'],
+    queryFn: async () => {
+      const [settings, rules] = await Promise.all([
+        apiFetch('/domain-policy/settings'),
+        apiFetch('/domain-policy/rules'),
+      ]);
+      const m = settings.tenant?.mode || 'allow_all';
+      setMode(m);
+      setPendingMode(m);
+      return { settings, rules };
+    },
+  });
+
+  const save = useMutation({
+    mutationFn: () => apiFetch('/domain-policy/settings', { method: 'PUT', body: JSON.stringify({ mode: pendingMode, enabled: true }) }),
+    onSuccess: () => { setMode(pendingMode); toast.success('Domain policy mode updated'); qc.invalidateQueries({ queryKey: ['domain-policy'] }); },
+    onError: (e: any) => toast.error(e.message),
+  });
+
+  const add = useMutation({
+    mutationFn: () => apiFetch('/domain-policy/rules', { method: 'POST', body: JSON.stringify({ action, pattern: pattern.trim().toLowerCase(), description }) }),
+    onSuccess: () => { toast.success('Rule added'); setPattern(''); setDescription(''); qc.invalidateQueries({ queryKey: ['domain-policy'] }); },
+    onError: (e: any) => toast.error(e.message),
+  });
+
+  const del = useMutation({
+    mutationFn: (id: string) => apiFetch('/domain-policy/rules/' + id, { method: 'DELETE' }),
+    onSuccess: () => { toast.success('Rule removed'); qc.invalidateQueries({ queryKey: ['domain-policy'] }); },
+  });
+
+  const rules: any[] = data?.rules?.tenant || [];
+  const allowRules = rules.filter((r: any) => r.action === 'allow');
+  const blockRules = rules.filter((r: any) => r.action === 'block');
+  const isAllowlist = mode === 'allowlist';
+  const modeChanged = pendingMode !== mode;
+  const allowlistEmpty = isAllowlist && allowRules.length === 0;
+
+  return (
+    <div className="space-y-5">
+
+      {/* Status banner */}
+      <div className={`rounded-xl border px-5 py-4 flex items-start gap-4 ${isAllowlist ? 'bg-blue-50 border-blue-200' : 'bg-gray-50 border-gray-200'}`}>
+        <div className={`mt-0.5 w-9 h-9 rounded-full flex items-center justify-center shrink-0 ${isAllowlist ? 'bg-blue-100' : 'bg-gray-200'}`}>
+          <Shield className={`w-5 h-5 ${isAllowlist ? 'text-blue-600' : 'text-gray-500'}`} />
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="font-semibold text-sm text-gray-900">Domain Policy</span>
+            {isAllowlist
+              ? <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-700 border border-blue-200">Active — Allowlist mode</span>
+              : <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-600 border border-gray-200">Allow all (inactive)</span>
+            }
+          </div>
+          <p className="text-sm text-gray-500 mt-1">
+            {isAllowlist
+              ? 'Emails from domains NOT in your allowlist are held for approval. Explicit block rules always reject immediately.'
+              : 'All domains are allowed. Switch to Allowlist mode to require approval for unknown domains.'}
+          </p>
+          {allowlistEmpty && (
+            <div className="mt-2 flex items-start gap-2 bg-yellow-50 border border-yellow-200 rounded-lg px-3 py-2">
+              <span className="text-yellow-600 text-sm font-medium">⚠ Allowlist is empty — every inbound email will require approval until you add allow rules below.</span>
+            </div>
+          )}
+        </div>
+        <a href="/domain-approvals" className="shrink-0 text-xs text-blue-600 hover:underline whitespace-nowrap mt-1">View pending approvals →</a>
+      </div>
+
+      {/* Mode selector */}
+      <Card>
+        <CardHeader><CardTitle className="text-base">Mode</CardTitle></CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <button onClick={() => setPendingMode('allow_all')}
+              className={`text-left rounded-xl border-2 p-4 transition-colors ${pendingMode === 'allow_all' ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:border-gray-300'}`}>
+              <div className="font-semibold text-sm text-gray-900 mb-1">Allow all</div>
+              <div className="text-xs text-gray-500">All domains pass. Only explicit block rules are enforced. No approval required.</div>
+            </button>
+            <button onClick={() => setPendingMode('allowlist')}
+              className={`text-left rounded-xl border-2 p-4 transition-colors ${pendingMode === 'allowlist' ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:border-gray-300'}`}>
+              <div className="font-semibold text-sm text-gray-900 mb-1">Allowlist (require approval)</div>
+              <div className="text-xs text-gray-500">Only listed domains pass directly. Unknown domains are held and admin is notified for approval.</div>
+            </button>
+          </div>
+          {modeChanged && (
+            <div className="flex items-center gap-3 pt-1">
+              <span className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-1.5">
+                Unsaved change: switching to <strong>{pendingMode === 'allowlist' ? 'Allowlist mode' : 'Allow all mode'}</strong>
+              </span>
+              <Button onClick={() => save.mutate()} disabled={save.isPending} className="h-8 text-xs">
+                <Save className="w-3.5 h-3.5 mr-1" />{save.isPending ? 'Saving...' : 'Apply mode'}
+              </Button>
+              <Button variant="outline" onClick={() => setPendingMode(mode)} className="h-8 text-xs">Cancel</Button>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Rules */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <CardTitle className="text-base">Domain Rules</CardTitle>
+            <div className="flex gap-2 text-xs text-gray-500">
+              <span className="bg-green-50 text-green-700 border border-green-200 px-2 py-0.5 rounded-full">{allowRules.length} allow</span>
+              <span className="bg-red-50 text-red-700 border border-red-200 px-2 py-0.5 rounded-full">{blockRules.length} block</span>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="text-xs text-gray-500 bg-gray-50 rounded-lg px-3 py-2">
+            <strong>Allow</strong> — domain passes directly (even in allowlist mode). &nbsp;
+            <strong>Block</strong> — always rejected, overrides everything. &nbsp;
+            Wildcards: <code>*.example.com</code> matches all subdomains.
+          </div>
+          <div className="grid grid-cols-4 gap-2">
+            <select className="border rounded-md px-2 h-10 text-sm" value={action} onChange={e => setAction(e.target.value)}>
+              <option value="allow">Allow</option>
+              <option value="block">Block</option>
+            </select>
+            <Input placeholder="example.com or *.example.com" value={pattern} onChange={e => setPattern(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter' && pattern.trim()) add.mutate(); }} />
+            <Input placeholder="Description (optional)" value={description} onChange={e => setDescription(e.target.value)} />
+            <Button onClick={() => add.mutate()} disabled={!pattern.trim() || add.isPending}>
+              <Plus className="w-4 h-4 mr-1" />{add.isPending ? 'Adding...' : 'Add rule'}
+            </Button>
+          </div>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead className="w-20">Action</TableHead>
+                <TableHead>Pattern</TableHead>
+                <TableHead>Description</TableHead>
+                <TableHead className="w-10" />
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {isLoading ? (
+                <TableRow><TableCell colSpan={4} className="text-center py-6 text-gray-400">Loading...</TableCell></TableRow>
+              ) : rules.length === 0 ? (
+                <TableRow><TableCell colSpan={4} className="text-center py-6 text-gray-400 text-sm">
+                  No rules yet. {isAllowlist ? 'Add allow rules for domains that should bypass approval.' : 'Add block rules to permanently reject specific domains.'}
+                </TableCell></TableRow>
+              ) : rules.map((r: any) => (
+                <TableRow key={r.id}>
+                  <TableCell>
+                    <Badge variant={r.action === 'block' ? 'danger' : 'success'} className="text-xs">{r.action.toUpperCase()}</Badge>
+                  </TableCell>
+                  <TableCell><code className="text-xs bg-gray-100 px-1.5 py-0.5 rounded">{r.pattern}</code></TableCell>
+                  <TableCell className="text-sm text-gray-500">{r.description || '-'}</TableCell>
+                  <TableCell className="text-right">
+                    <Button variant="ghost" size="sm" onClick={() => del.mutate(r.id)} className="h-7 w-7 p-0">
+                      <Trash2 className="w-3.5 h-3.5 text-red-500" />
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
 // ── Audit Log ──────────────────────────────────
 function AuditTab() {
   const { data = [], isLoading, refetch } = useQuery({ queryKey: ['policy-audit'], queryFn: () => apiFetch('/audit-log?limit=50') });
@@ -528,6 +703,7 @@ export default function PolicyEnginePage() {
         ))}
       </div>
       {tab === 'global' && <GlobalWLTab />}
+      {tab === 'domain-policy' && <DomainPolicyTab />}
       {tab === 'personal' && <PersonalWLTab />}
       {tab === 'cro' && <CROTab />}
       {tab === 'settings' && <SettingsTab />}

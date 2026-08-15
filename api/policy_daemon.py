@@ -25,6 +25,7 @@ import asyncio
 import json
 import logging
 import os
+import asyncpg
 import sys
 import signal
 
@@ -36,7 +37,29 @@ from cmp.policy.policy_engine import (
     Action, build_config_from_db
 )
 from cmp.policy.policy_store import load_policy_config, write_audit_log
-from cmp.policy.domain_matcher import email_domain, normalize_email
+from cmp.policy.domain_policy_store import load_domain_policy, list_active_tenant_domains
+from cmp.policy.domain_policy_engine import evaluate_domain_policy, DomainPolicyAction
+from cmp.policy.domain_matcher import email_domain, normalize_email, email_matches_pattern
+from cmp.services.domain_approval_service import create_and_notify
+
+def _get_pg_password() -> str:
+    try:
+        with open('/opt/cmp/.env') as f:
+            for line in f:
+                k, _, v = line.partition('=')
+                if k.strip() == 'DB_PASSWORD':
+                    return v.strip()
+    except OSError:
+        pass
+    return os.environ.get('DB_PASSWORD', '')
+
+
+async def _asyncpg_conn():
+    return await asyncpg.connect(
+        host='127.0.0.1', port=5432, user='cmp',
+        password=_get_pg_password(), database='cmp'
+    )
+
 
 logging.basicConfig(
     level=logging.INFO,
@@ -54,11 +77,114 @@ POLICY_VERSION = "1.0"
 TENANT_ID = os.environ.get("CMP_TENANT_ID", "0201fa69-1857-430c-b78a-0df2ca5d10de")  # default admin tenant
 
 
-async def load_engine() -> PolicyEngine:
-    """Load policy engine config from DB."""
-    cfg_data = await load_policy_config(TENANT_ID)
+async def load_engine(tenant_id: str = TENANT_ID) -> PolicyEngine:
+    """Load legacy policy engine config from DB for the resolved tenant."""
+    cfg_data = await load_policy_config(tenant_id)
     config = build_config_from_db(**cfg_data)
     return PolicyEngine(config)
+
+
+async def resolve_tenant_id(req: dict, direction: Direction) -> tuple[str | None, set[str]]:
+    """Resolve tenant from the owned recipient (inbound) or sender (outbound)."""
+    rows = await list_active_tenant_domains()
+    owned = {str(row["domain_name"]).strip().lower() for row in rows}
+    target = email_domain(req.get("recipient", "")) if direction == Direction.INBOUND else email_domain(req.get("sender", ""))
+    for row in rows:
+        if str(row["domain_name"]).strip().lower() == target:
+            return str(row["tenant_id"]), owned
+    # Some relay clients authenticate as an email-style username.
+    if direction == Direction.OUTBOUND:
+        auth_domain = email_domain(req.get("sasl_username", ""))
+        for row in rows:
+            if str(row["domain_name"]).strip().lower() == auth_domain:
+                return str(row["tenant_id"]), owned
+    return None, owned
+
+
+async def _load_cro_patterns(tenant_id: str) -> list[str]:
+    """Load CRO account patterns for the tenant from policy_cro_accounts."""
+    conn = await _asyncpg_conn()
+    try:
+        rows = await conn.fetch(
+            "SELECT account_pattern FROM policy_cro_accounts WHERE tenant_id=$1 AND enabled=TRUE",
+            tenant_id
+        )
+        return [r["account_pattern"] for r in rows]
+    finally:
+        await conn.close()
+
+
+def _email_matches_any_cro(email: str, patterns: list[str]) -> bool:
+    for pat in patterns:
+        if email_matches_pattern(email, pat):
+            return True
+    return False
+
+
+async def evaluate_domain_stage(req: dict, ctx: PolicyContext) -> tuple[object | None, str | None]:
+    """Evaluate the new tenant/global domain policy before legacy rules.
+
+    CRO accounts bypass the allowlist restriction: if the sender (inbound) or
+    any recipient (outbound) matches a tenant CRO pattern, domain policy is
+    skipped entirely and the message proceeds to the legacy policy engine where
+    the CRO rule fires. Explicit BLOCK rules still win over CRO bypass because
+    blocks are checked before the CRO short-circuit.
+    """
+    tenant_id, owned_domains = await resolve_tenant_id(req, ctx.direction)
+    if not tenant_id:
+        return None, None
+    if ctx.direction == Direction.INBOUND:
+        # Inbound: check sender domain against owned domains to identify external
+        candidates = [ctx.sender_domain]
+        external = [d for d in candidates if d and d not in owned_domains]
+        if not external:
+            return None, tenant_id  # sender is internal, skip policy
+    else:
+        # Outbound: check recipient domains against policy.
+        # Skip owned/internal domains — policy only applies to external recipients.
+        external = [d for d in ctx.recipient_domains if d and d not in owned_domains]
+        if not external:
+            return None, tenant_id  # all recipients are internal, skip
+
+    policy = await load_domain_policy(tenant_id)
+
+    # 1. Explicit block rules always win — check these before CRO bypass.
+    for domain in external:
+        from cmp.policy.domain_matcher import matches_any_pattern
+        _, blk = matches_any_pattern(domain, policy.get("global_domain_block_patterns", []))
+        if blk:
+            decision = evaluate_domain_policy(domain, policy)
+            return decision, tenant_id
+        _, tblk = matches_any_pattern(domain, policy.get("tenant_domain_block_patterns", []))
+        if tblk:
+            decision = evaluate_domain_policy(domain, policy)
+            return decision, tenant_id
+
+    # 2. CRO bypass: if sender/recipients match CRO patterns, skip allowlist check.
+    cro_patterns = await _load_cro_patterns(tenant_id)
+    if cro_patterns:
+        if ctx.direction == Direction.INBOUND:
+            if _email_matches_any_cro(ctx.sender, cro_patterns):
+                log.info(f"DOMAIN_POLICY CRO bypass inbound sender {ctx.sender}")
+                return None, tenant_id  # let legacy engine handle CRO_INBOUND_ALLOWED
+        else:
+            for rcpt in ctx.recipients:
+                if _email_matches_any_cro(rcpt, cro_patterns):
+                    log.info(f"DOMAIN_POLICY CRO bypass outbound recipient {rcpt}")
+                    return None, tenant_id
+
+    # 3. Full domain policy evaluation (allowlist, global allows, etc.)
+    for domain in external:
+        decision = evaluate_domain_policy(domain, policy)
+        if decision.action == DomainPolicyAction.REJECT:
+            from cmp.policy.domain_policy_engine import DomainPolicyReason
+            if decision.reason_code in (
+                DomainPolicyReason.TENANT_ALLOWLIST_MISS,
+            ):
+                # HOLD for approval instead of hard REJECT
+                return ("HOLD_FOR_APPROVAL", decision, tenant_id), tenant_id
+            return decision, tenant_id
+    return "ALLOW", tenant_id
 
 
 def parse_postfix_request(data: str) -> dict:
@@ -85,9 +211,20 @@ def build_policy_context(req: dict) -> PolicyContext:
     # Internal domains loaded from config; fallback: check if recipient matches known internal patterns
     # For now: INBOUND = sender is external (not in our domains)
     # The engine will figure out the right policy based on whitelist config
-    # Simple heuristic: if SASL username present = OUTBOUND
+    # Detect direction:
+    # 1. SASL username present = outbound relay via port 587
+    # 2. client_address is in mynetworks (Plesk/trusted relay) + sender is local domain = outbound
     sasl_user = req.get("sasl_username", "")
-    direction = Direction.OUTBOUND if sasl_user else Direction.INBOUND
+    client_addr = req.get("client_address", "")
+    MYNETWORKS = {"127.0.0.1", "::1", "116.204.131.86"}  # keep in sync with main.cf mynetworks
+    sender_domain_local = email_domain(sender) if sender != "unknown@unknown" else ""
+    if sasl_user:
+        direction = Direction.OUTBOUND
+    elif client_addr in MYNETWORKS and sender_domain_local:
+        # Trusted relay (Plesk webmail etc.) — treat as outbound, check recipient domain
+        direction = Direction.OUTBOUND
+    else:
+        direction = Direction.INBOUND
 
     return PolicyContext(
         message_id=req.get("queue_id", req.get("instance", "unknown")),
@@ -139,27 +276,57 @@ async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
             return
 
         try:
-            engine = await load_engine()
             ctx = build_policy_context(req)
-            decision = engine.evaluate(ctx)
+            domain_stage_result, resolved_tenant_id = await evaluate_domain_stage(req, ctx)
+            decision = None
+            if isinstance(domain_stage_result, tuple) and len(domain_stage_result) == 3 and domain_stage_result[0] == "HOLD_FOR_APPROVAL":
+                _, domain_decision, _tid = domain_stage_result
+                queue_id = req.get("queue_id", req.get("instance", ""))
+                action = f"HOLD Domain approval required: email from {domain_decision.domain} is pending review"
+                log.info(f"DOMAIN_POLICY {ctx.direction.value} {ctx.sender}->{ctx.recipients} => HOLD_FOR_APPROVAL ({domain_decision.domain})")
+                asyncio.ensure_future(create_and_notify(
+                    tenant_id=resolved_tenant_id or TENANT_ID,
+                    queue_id=queue_id,
+                    sender=ctx.sender,
+                    recipient=ctx.recipients[0] if ctx.recipients else "",
+                    sender_domain=domain_decision.domain,
+                    subject="",
+                    direction=ctx.direction.value,
+                ))
+            elif domain_stage_result == "ALLOW":
+                action = "DUNNO"
+                log.info(f"DOMAIN_POLICY {ctx.direction.value} {ctx.sender}->{ctx.recipients} => ALLOW")
+            elif domain_stage_result is not None:
+                action = f"REJECT 5.7.1 Email domain policy: {domain_stage_result.reason_code.value}"
+                log.info(f"DOMAIN_POLICY {ctx.direction.value} {ctx.sender}->{ctx.recipients} => REJECT ({domain_stage_result.matched_rule})")
+            else:
+                # domain_stage_result is None = domain policy skipped
+                # (internal recipients, no tenant resolved, or CRO bypass).
+                # For OUTBOUND, skip legacy engine — outbound is domain-policy only.
+                # For INBOUND, fall through to legacy engine (whitelist/CRO rules).
+                if ctx.direction == Direction.OUTBOUND:
+                    action = "DUNNO"
+                    log.info(f"DOMAIN_POLICY OUTBOUND {ctx.sender}->{ctx.recipients} => DUNNO (internal/skip)")
+                else:
+                    engine = await load_engine(resolved_tenant_id or TENANT_ID)
+                    decision = engine.evaluate(ctx)
 
-            # Async audit log (fire-and-forget)
-            asyncio.ensure_future(write_audit_log(
-                tenant_id=TENANT_ID,
-                message_id=ctx.message_id,
-                direction=ctx.direction.value,
-                sender=ctx.sender,
-                recipients=ctx.recipients,
-                action=decision.action.value,
-                reason_code=decision.reason_code.value,
-                matched_rule=decision.matched_rule,
-                notify_recipient=decision.notify_recipient,
-                bounce_sender=decision.bounce_sender,
-                policy_version=POLICY_VERSION,
-            ))
-
-            action = decision_to_postfix_action(decision, req)
-            log.info(f"{ctx.direction.value} {ctx.sender}->{ctx.recipients} => {decision.action.value} ({decision.reason_code.value})")
+            if decision is not None:
+                asyncio.ensure_future(write_audit_log(
+                    tenant_id=resolved_tenant_id or TENANT_ID,
+                    message_id=ctx.message_id,
+                    direction=ctx.direction.value,
+                    sender=ctx.sender,
+                    recipients=ctx.recipients,
+                    action=decision.action.value,
+                    reason_code=decision.reason_code.value,
+                    matched_rule=decision.matched_rule,
+                    notify_recipient=decision.notify_recipient,
+                    bounce_sender=decision.bounce_sender,
+                    policy_version=POLICY_VERSION,
+                ))
+                action = decision_to_postfix_action(decision, req)
+                log.info(f"{ctx.direction.value} {ctx.sender}->{ctx.recipients} => {decision.action.value} ({decision.reason_code.value})")
 
         except Exception as e:
             log.error(f"Policy evaluation error: {e}")
