@@ -4,6 +4,7 @@ CRUD for global whitelist, personal whitelist, CRO accounts.
 Evaluate endpoint for testing policy decisions.
 """
 from fastapi import APIRouter, Depends, Query, HTTPException
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 from typing import Optional, List
 from cmp.middleware.auth import get_current_user, require_admin
@@ -16,6 +17,17 @@ from cmp.policy.policy_store import (
 )
 from cmp.policy.policy_engine import (
     PolicyEngine, PolicyContext, AttachmentMeta, Direction, build_config_from_db
+)
+from cmp.policy.domain_policy_engine import evaluate_message_domains, DomainPolicyAction
+from cmp.services.domain_approval_service import (
+    init_approval_tables, list_approvals, list_all_approvals,
+    get_approval_by_token, process_approval, create_and_notify, ApprovalProcessingError,
+)
+from cmp.policy.domain_policy_store import (
+    init_domain_policy_tables, get_settings as get_domain_settings,
+    save_settings as save_domain_settings, get_global_settings as get_global_domain_settings,
+    save_global_settings as save_global_domain_settings, list_rules as list_domain_rules,
+    add_rule as add_domain_rule, delete_rule as delete_domain_rule,
 )
 
 router = APIRouter(prefix="/api/v1/policy", tags=["Policy Engine"])
@@ -46,6 +58,17 @@ class ToggleBody(BaseModel):
     enabled: bool
 
 
+class DomainSettingsBody(BaseModel):
+    mode: str = "allow_all"
+    enabled: bool = True
+
+
+class DomainRuleCreate(BaseModel):
+    action: str
+    pattern: str
+    description: Optional[str] = ""
+
+
 class EvaluateRequest(BaseModel):
     """Manual policy evaluation — for testing/debugging."""
     message_id: str = "test-001"
@@ -68,6 +91,59 @@ class EvaluateRequest(BaseModel):
 async def init_tables(tenant=Depends(require_admin)):
     await init_policy_tables()
     return {"message": "Policy tables initialized"}
+
+
+@router.get("/domain-policy/settings")
+async def get_domain_policy_settings(tenant=Depends(get_current_user)):
+    return {"tenant": await get_domain_settings(tenant.id), "global": await get_global_domain_settings()}
+
+
+@router.put("/domain-policy/settings")
+async def update_domain_policy_settings(req: DomainSettingsBody, tenant=Depends(get_current_user)):
+    if req.mode not in ("allow_all", "allowlist"):
+        raise HTTPException(status_code=400, detail="mode must be allow_all or allowlist")
+    return await save_domain_settings(tenant.id, req.mode, req.enabled)
+
+
+@router.put("/domain-policy/global-settings")
+async def update_global_domain_policy_settings(req: DomainSettingsBody, tenant=Depends(require_admin)):
+    if req.mode not in ("allow_all", "allowlist"):
+        raise HTTPException(status_code=400, detail="mode must be allow_all or allowlist")
+    return await save_global_domain_settings(req.mode, req.enabled)
+
+
+@router.get("/domain-policy/rules")
+async def get_domain_policy_rules(tenant=Depends(get_current_user)):
+    return {"tenant": await list_domain_rules("tenant", tenant.id),
+            "global": await list_domain_rules("global") if tenant.is_admin else []}
+
+
+@router.post("/domain-policy/rules")
+async def create_domain_policy_rule(req: DomainRuleCreate, tenant=Depends(get_current_user)):
+    if req.action not in ("allow", "block") or not req.pattern.strip():
+        raise HTTPException(status_code=400, detail="action must be allow/block and pattern is required")
+    return await add_domain_rule("tenant", tenant.id, req.action, req.pattern, req.description or "")
+
+
+@router.post("/domain-policy/global-rules")
+async def create_global_domain_policy_rule(req: DomainRuleCreate, tenant=Depends(require_admin)):
+    if req.action not in ("allow", "block") or not req.pattern.strip():
+        raise HTTPException(status_code=400, detail="action must be allow/block and pattern is required")
+    return await add_domain_rule("global", None, req.action, req.pattern, req.description or "")
+
+
+@router.delete("/domain-policy/rules/{rule_id}")
+async def remove_domain_policy_rule(rule_id: str, tenant=Depends(get_current_user)):
+    if not await delete_domain_rule(rule_id, "tenant", tenant.id):
+        raise HTTPException(status_code=404, detail="Rule not found")
+    return {"deleted": rule_id}
+
+
+@router.delete("/domain-policy/global-rules/{rule_id}")
+async def remove_global_domain_policy_rule(rule_id: str, tenant=Depends(require_admin)):
+    if not await delete_domain_rule(rule_id, "global"):
+        raise HTTPException(status_code=404, detail="Rule not found")
+    return {"deleted": rule_id}
 
 
 # ---------------------------------------------------------------------------
@@ -173,6 +249,22 @@ async def evaluate_policy(req: EvaluateRequest, tenant=Depends(get_current_user)
     Evaluate a policy decision given email metadata.
     Used for testing rules before they affect live mail flow.
     """
+    # Domain allow/block policy is evaluated before the legacy policy engine.
+    from cmp.policy.domain_policy_store import load_domain_policy
+    from cmp.policy.domain_matcher import email_domain
+    direction = Direction(req.direction.upper())
+    domain_policy = await load_domain_policy(tenant.id)
+    domain_candidates = ([email_domain(req.sender)] if direction == Direction.INBOUND
+                         else [email_domain(r) for r in req.recipients])
+    domain_decision = evaluate_message_domains(domain_candidates, domain_policy)
+    if domain_decision.action == DomainPolicyAction.REJECT:
+        return {
+            "action": "BOUNCE", "reason_code": domain_decision.reason_code.value,
+            "notify_recipient": False, "bounce_sender": True,
+            "matched_rule": domain_decision.matched_rule, "direction": direction.value,
+            "per_recipient": {},
+        }
+
     # Load config from DB
     cfg_data = await load_policy_config(tenant.id)
     config = build_config_from_db(**cfg_data)
@@ -310,3 +402,85 @@ async def edit_cro(entry_id: str, req: CROUpdate, tenant=Depends(require_admin))
     if not result:
         raise HTTPException(status_code=404, detail="Entry not found")
     return result
+
+
+# ── Domain Approval Routes ─────────────────────────────────────────────────
+
+class ApprovalActionBody(BaseModel):
+    add_to_allowlist: bool = False
+
+
+@router.get("/domain-approvals")
+async def get_domain_approvals(status: Optional[str] = None, tenant=Depends(get_current_user)):
+    """List domain approval requests. Admin sees all tenants."""
+    await init_approval_tables()
+    if getattr(tenant, "is_admin", False):
+        return await list_all_approvals(status)
+    return await list_approvals(tenant.id, status)
+
+
+async def _process_approval_or_409(approval_id: str, action: str, actioned_by: str, add_to_allowlist: bool = False):
+    try:
+        return await process_approval(approval_id, action, actioned_by, add_to_allowlist)
+    except ApprovalProcessingError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post("/domain-approvals/{approval_id}/approve")
+async def approve_domain_request(
+    approval_id: str, body: ApprovalActionBody = ApprovalActionBody(),
+    tenant=Depends(get_current_user)
+):
+    return await _process_approval_or_409(approval_id, "approve", tenant.email, body.add_to_allowlist)
+
+
+@router.post("/domain-approvals/{approval_id}/reject")
+async def reject_domain_request(approval_id: str, tenant=Depends(get_current_user)):
+    return await _process_approval_or_409(approval_id, "reject", tenant.email, False)
+
+
+def _approval_action_page(approval: dict, token: str, action: str) -> str:
+    from html import escape
+    label = "Approve and release" if action == "approve" else "Reject and delete"
+    color = "#059669" if action == "approve" else "#dc2626"
+    status = str(approval.get("status", "pending"))
+    if status != "pending":
+        return ("<!doctype html><html><body style='font-family:system-ui;background:#f3f4f6;padding:32px'>"
+                f"<main style='max-width:560px;margin:auto;background:white;border-radius:14px;padding:32px'><h2>Approval already {escape(status)}</h2>"
+                "<p>This request has already been actioned. No mail-flow change was made by this page.</p></main></body></html>")
+    sender = escape(str(approval.get("sender", "")), quote=True)
+    recipient = escape(str(approval.get("recipient", "")), quote=True)
+    domain = escape(str(approval.get("sender_domain", "")), quote=True)
+    subject = escape(str(approval.get("subject", "") or "(not available)"), quote=True)
+    action_url = escape(f"/api/v1/policy/domain-approvals/action?token={token}&action={action}", quote=True)
+    return ("<!doctype html><html><head><meta charset='utf-8'><meta name='robots' content='noindex,nofollow'>"
+            "<title>Confirm domain approval</title></head><body style='font-family:system-ui;background:#f3f4f6;padding:32px'>"
+            "<main style='max-width:600px;margin:auto;background:white;border-radius:14px;overflow:hidden'>"
+            "<header style='background:#1d4ed8;color:white;padding:24px 32px'><h1>Confirm email action</h1>"
+            "<p>This preview is safe. The action happens only after confirmation.</p></header>"
+            f"<section style='padding:28px 32px'><p><b>From:</b> {sender}</p><p><b>Domain:</b> {domain}</p>"
+            f"<p><b>To:</b> {recipient}</p><p><b>Subject:</b> {subject}</p>"
+            f"<form method='post' action='{action_url}'><button type='submit' style='background:{color};color:white;border:0;border-radius:8px;padding:13px 20px;font-size:15px;font-weight:600'>{label}</button></form>"
+            "<p style='color:#6b7280;font-size:12px'>Mail scanners cannot execute the POST confirmation.</p></section></main></body></html>")
+
+
+@router.get("/domain-approvals/action", response_class=HTMLResponse)
+async def approval_action_preview(token: str, action: str):
+    if action not in ("approve", "reject"):
+        raise HTTPException(status_code=400, detail="action must be approve or reject")
+    approval = await get_approval_by_token(token, action)
+    if not approval:
+        raise HTTPException(status_code=404, detail="Invalid or expired token")
+    return HTMLResponse(_approval_action_page(approval, token, action), headers={"Cache-Control": "no-store, no-cache, must-revalidate", "X-Robots-Tag": "noindex, nofollow"})
+
+
+@router.post("/domain-approvals/action")
+async def approval_action_confirm(token: str, action: str):
+    if action not in ("approve", "reject"):
+        raise HTTPException(status_code=400, detail="action must be approve or reject")
+    approval = await get_approval_by_token(token, action)
+    if not approval:
+        raise HTTPException(status_code=404, detail="Invalid or expired token")
+    result = await _process_approval_or_409(str(approval["id"]), action, "email_link", False)
+    label = "approved and released" if action == "approve" else "rejected and deleted"
+    return {"message": f"Email from {approval['sender_domain']} has been {label}.", "status": result["status"], "sender": approval["sender"], "recipient": approval["recipient"]}

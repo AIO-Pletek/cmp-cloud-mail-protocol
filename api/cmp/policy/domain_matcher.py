@@ -88,7 +88,11 @@ def email_matches_pattern(email: str, pattern: str) -> bool:
     email = normalize_email(email)
     pattern = normalize_email(pattern)
 
-    if "@" in pattern:
+    if pattern.startswith("*@"):
+        # Wildcard sender: *@domain.com matches any email at that domain
+        domain_part = pattern[2:]  # strip "*@"
+        return email_domain(email) == domain_part
+    elif "@" in pattern:
         # Exact email match
         return email == pattern
     elif pattern.startswith("*."):
