@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Plus, Loader2, LogIn, Users, Shield, Globe } from 'lucide-react';
+import { Plus, Loader2, LogIn, Users, Shield, Globe, Bell } from 'lucide-react';
 import { formatDate } from '@/lib/utils';
 import toast from 'react-hot-toast';
 import { useRouter } from 'next/navigation';
@@ -17,6 +17,7 @@ import { useAuth } from '@/lib/auth';
 function getToken() { return typeof window !== 'undefined' ? localStorage.getItem('cmp_access_token') || '' : ''; }
 const apiGet = async (url: string) => { const r = await fetch('/api/v1' + url, { headers: { 'Authorization': 'Bearer ' + getToken() } }); return r.json(); };
 const apiPost = async (url: string, body: any) => { const r = await fetch('/api/v1' + url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getToken() }, body: JSON.stringify(body) }); return r.json(); };
+const apiPut = async (url: string, body: any) => { const r = await fetch('/api/v1' + url, { method: 'PUT', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getToken() }, body: JSON.stringify(body) }); return r.json(); };
 
 export default function TenantsPage() {
   const qc = useQueryClient();
@@ -27,6 +28,8 @@ export default function TenantsPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [plan, setPlan] = useState('starter');
+  const [editTenant, setEditTenant] = useState<any>(null);
+  const [notifEmails, setNotifEmails] = useState('');
 
   const { data: tenantsRaw, isLoading } = useQuery({
     queryKey: ['tenants'],
@@ -73,6 +76,16 @@ export default function TenantsPage() {
     },
   });
 
+  const notifMut = useMutation({
+    mutationFn: () => apiPut('/tenants/' + editTenant.id, { notification_emails: notifEmails }),
+    onSuccess: () => {
+      toast.success('Notification recipients saved');
+      qc.invalidateQueries({ queryKey: ['tenants'] });
+      setEditTenant(null);
+    },
+    onError: () => toast.error('Failed to save notification recipients'),
+  });
+
   const planColors: Record<string, string> = {
     free: 'bg-gray-100 text-gray-700',
     starter: 'bg-blue-100 text-blue-700',
@@ -113,6 +126,26 @@ export default function TenantsPage() {
         </CardContent></Card>
       )}
 
+      {editTenant && (
+        <Card><CardContent className="p-4">
+          <h3 className="text-sm font-semibold text-gray-700 mb-1">Domain Approval Notifications — {editTenant.name}</h3>
+          <p className="text-xs text-gray-500 mb-3">
+            Approval requests always go to the tenant email ({editTenant.email}). Add extra recipients below, comma separated.
+          </p>
+          <Input
+            placeholder="ops@example.com, it@example.com"
+            value={notifEmails}
+            onChange={(e: any) => setNotifEmails(e.target.value)}
+          />
+          <div className="mt-3 flex gap-2">
+            <Button size="sm" onClick={() => notifMut.mutate()} disabled={notifMut.isPending}>
+              {notifMut.isPending ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Bell className="w-4 h-4 mr-1" />}Save Recipients
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => setEditTenant(null)}>Cancel</Button>
+          </div>
+        </CardContent></Card>
+      )}
+
       <Card><CardContent className="p-0">
         {isLoading ? (
           <div className="flex items-center justify-center py-12"><Loader2 className="w-6 h-6 animate-spin text-gray-400" /></div>
@@ -136,6 +169,9 @@ export default function TenantsPage() {
                 <TableCell className="text-sm text-gray-500">{t.createdAt ? formatDate(t.createdAt) : '-'}</TableCell>
                 <TableCell className="text-right">
                   <div className="flex items-center justify-end gap-2">
+                    <Button variant="outline" size="sm" onClick={() => { setEditTenant(t); setNotifEmails(t.notification_emails || ''); }} title="Domain approval notification recipients">
+                      <Bell className="w-4 h-4 mr-1" /> Notify
+                    </Button>
                     <Button variant="outline" size="sm" onClick={() => impersonateMut.mutate(t.id)} disabled={impersonateMut.isPending} title="Login as this tenant">
                       <LogIn className="w-4 h-4 mr-1" /> Impersonate
                     </Button>

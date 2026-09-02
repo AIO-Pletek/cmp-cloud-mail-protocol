@@ -37,3 +37,4 @@ class Tenant(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
+    notification_emails: Mapped[str] = mapped_column(String(1024), nullable=False, default="", server_default="")

@@ -82,6 +82,24 @@ async def get_tenant_admin_email(tenant_id: str) -> str | None:
         await c.close()
 
 
+async def get_notification_emails(tenant_id: str) -> list[str]:
+    """Tenant admin email + extra recipients from tenants.notification_emails (comma/semicolon separated)."""
+    c = await _conn()
+    try:
+        row = await c.fetchrow("SELECT email, notification_emails FROM tenants WHERE id=$1", tenant_id)
+        if not row:
+            return []
+        emails = [str(row["email"])]
+        extra = (row["notification_emails"] or "").replace(";", ",")
+        for e in extra.split(","):
+            e = e.strip().lower()
+            if e and e not in emails:
+                emails.append(e)
+        return emails
+    finally:
+        await c.close()
+
+
 async def find_pending(tenant_id: str, sender: str, recipient: str) -> dict | None:
     """Return existing pending approval to avoid duplicate notifications."""
     c = await _conn()
@@ -411,18 +429,19 @@ async def create_and_notify(
             )
         return existing
 
-    admin_email = await get_tenant_admin_email(tenant_id)
-    if not admin_email:
+    notify_emails = await get_notification_emails(tenant_id)
+    if not notify_emails:
         return None
 
     approval = await create_approval(
         tenant_id, queue_id, sender, recipient,
-        sender_domain, subject, direction, admin_email
+        sender_domain, subject, direction, ",".join(notify_emails)
     )
 
-    # Send admin notification in background
+    # Send admin notification in background, one copy per configured recipient
     loop = asyncio.get_event_loop()
-    loop.run_in_executor(None, _send_notification_email, admin_email, approval)
+    for em in notify_emails:
+        loop.run_in_executor(None, _send_notification_email, em, approval)
 
     # Deliberately do not notify the original sender or recipient.
     # Pending-review notifications are sent only to the tenant mail administrator

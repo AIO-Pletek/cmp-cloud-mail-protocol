@@ -23,6 +23,7 @@ class TenantRead(BaseModel):
     api_key: str
     is_active: bool
     is_admin: bool = Field(default=False, alias="isAdmin")
+    notification_emails: str = ""
     created_at: datetime
 
     model_config = {"from_attributes": True, "populate_by_name": True}
@@ -32,6 +33,7 @@ class TenantUpdate(BaseModel):
     name: str | None = None
     plan: str | None = None
     is_active: bool | None = None
+    notification_emails: str | None = None
 
 
 class TenantBranding(BaseModel):
