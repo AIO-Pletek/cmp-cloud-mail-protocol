@@ -81,7 +81,7 @@ async def get_spam_report(db: AsyncSession, tenant_id: str, period: str = "7d") 
     placeholders = ", ".join(["'" + d + "'" for d in domain_names])
 
     spam_r = await db.execute(
-        text(f"SELECT COUNT(*) FROM email_logs WHERE domain IN ({placeholders}) AND status IN ('bounced', 'rejected') AND timestamp >= :s"),
+        text(f"SELECT COUNT(*) FROM email_logs WHERE domain IN ({placeholders}) AND status = 'rejected' AND timestamp >= :s"),
         {"s": since}
     )
     total_spam = spam_r.scalar() or 0
@@ -92,11 +92,27 @@ async def get_spam_report(db: AsyncSession, tenant_id: str, period: str = "7d") 
     )
     total_emails = total_r.scalar() or 1
 
+    ts_r = await db.execute(
+        text(f"SELECT sender, COUNT(*) AS c FROM email_logs WHERE domain IN ({placeholders}) AND status = 'rejected' AND timestamp >= :s GROUP BY sender ORDER BY c DESC LIMIT 10"),
+        {"s": since}
+    )
+    top_senders = [
+        {"sender": r.sender or "(empty)", "count": r.c,
+         "percentage": round(r.c / total_spam * 100, 1) if total_spam else 0.0}
+        for r in ts_r.all()
+    ]
+
+    bd_r = await db.execute(
+        text(f"SELECT domain, COUNT(*) AS total, COUNT(*) FILTER (WHERE status = 'rejected') AS spam FROM email_logs WHERE domain IN ({placeholders}) AND timestamp >= :s GROUP BY domain ORDER BY spam DESC"),
+        {"s": since}
+    )
+    by_domain = [{"domain": r.domain, "spam": r.spam, "total": r.total} for r in bd_r.all()]
+
     return {
         "total_spam": total_spam,
         "spam_ratio": round(total_spam / total_emails, 4),
-        "top_spam_senders": [],
-        "by_reason": [],
+        "top_senders": top_senders,
+        "by_domain": by_domain,
     }
 
 
@@ -123,12 +139,14 @@ async def get_domain_health_report(db: AsyncSession, tenant_id: str) -> list:
         spf = await check_spf_record(d.domain_name)
         dkim = await check_dkim_record(d.domain_name, d.dkim_selector)
         dmarc = await check_dmarc_record(d.domain_name)
+        ok = [bool(mx), bool(spf), bool(dkim), bool(dmarc)]
         health.append({
             "domain": d.domain_name,
-            "mx_status": "ok" if mx else "missing",
-            "spf_status": "ok" if spf else "missing",
-            "dkim_status": "ok" if dkim else "missing",
-            "dmarc_status": "ok" if dmarc else "missing",
+            "mx_ok": ok[0],
+            "spf_ok": ok[1],
+            "dkim_ok": ok[2],
+            "dmarc_ok": ok[3],
+            "score": 25 * sum(ok),
         })
     return health
 
