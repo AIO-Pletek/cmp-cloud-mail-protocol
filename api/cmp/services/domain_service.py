@@ -14,11 +14,24 @@ GATEWAY_MX_TARGETS = {"103.24.12.21", "mailprotocol.cbncloud.net"}
 
 
 async def list_domains(db: AsyncSession, tenant_id: str, is_admin: bool = False) -> list[Domain]:
+    from sqlalchemy import text
     if is_admin:
         result = await db.execute(select(Domain).where(Domain.is_active == True))
     else:
         result = await db.execute(select(Domain).where(Domain.tenant_id == tenant_id, Domain.is_active == True))
-    return list(result.scalars().all())
+    domains = list(result.scalars().all())
+    if domains:
+        # Live stats from email_logs (columns email_count/spam_blocked are display-only)
+        # ponytail: full-table GROUP BY; fine while email_logs stays small, revisit past ~1M rows
+        rows = (await db.execute(text(
+            "SELECT domain AS d, COUNT(*) AS total, "
+            "COUNT(*) FILTER (WHERE status='rejected') AS spam "
+            "FROM email_logs GROUP BY domain"
+        ))).all()
+        stats = {r.d: (r.total, r.spam) for r in rows}
+        for d in domains:
+            d.email_count, d.spam_blocked = stats.get(d.domain_name, (0, 0))
+    return domains
 
 
 async def add_domain(db: AsyncSession, tenant: Tenant, domain_name: str) -> Domain:

@@ -81,10 +81,13 @@ async def _get_relay_domains(conn) -> set:
     return {r["domain_name"].strip().lower() for r in rows}
 
 
-async def parse_and_store_logs():
+async def parse_and_store_logs(since=None):
     conn = await get_db()
-    last = await conn.fetchval("SELECT MAX(timestamp) FROM email_logs")
-    last = last.replace(tzinfo=None) if last else datetime.utcnow() - timedelta(hours=72)
+    if since is not None:
+        last = since.replace(tzinfo=None)
+    else:
+        last = await conn.fetchval("SELECT MAX(timestamp) FROM email_logs")
+        last = last.replace(tzinfo=None) if last else datetime.utcnow() - timedelta(hours=72)
 
     # Load owned relay domains once for the whole parse run
     relay_domains = await _get_relay_domains(conn)
@@ -134,7 +137,27 @@ async def parse_and_store_logs():
                     sm = re.search(r"size=(\d+)", line)
                     sender_addr = fm.group(1) if fm else ""
                     queue_ids[qid] = {"sender": sender_addr, "size": int(sm.group(1)) if sm else 0}
-                if "to=" in line and "status=" in line:
+                if "to=" in line and "status=" not in line and ("milter-reject" in line or ": reject:" in line):
+                    tm2 = re.search(r"to=<([^>]+)>", line)
+                    fm2 = re.search(r"from=<([^>]*)>", line)
+                    rsn = re.search(r"\]:\s*[\d.]+\s+(.+?);?\s*from=<", line)
+                    if tm2:
+                        recip = tm2.group(1)
+                        sender = fm2.group(1) if fm2 else queue_ids.get(qid, {}).get("sender", "")
+                        dom = recip.split("@")[-1].lower() if "@" in recip else ""
+                        sender_dom = sender.split("@")[-1].lower() if "@" in sender else ""
+                        direction = "incoming" if (dom in relay_domains or not sender) else ("outgoing" if sender_dom in relay_domains else "incoming")
+                        msg = rsn.group(1) if rsn else "rejected"
+                        await conn.execute(
+                            """INSERT INTO email_logs
+                               (queue_id, timestamp, direction, sender, recipient,
+                                size_bytes, status, status_message, destination_relay, domain, action)
+                               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'rejected')
+                               ON CONFLICT (queue_id, recipient) DO NOTHING""",
+                            qid, ts, direction, sender, recip, 0, "rejected", msg, "", dom
+                        )
+                        count += 1
+                elif "to=" in line and "status=" in line:
                     tm = re.search(r"to=<([^>]+)>", line)
                     st_m = re.search(r"status=(\w+)", line)
                     rm = re.search(r"relay=([^,\[]+)", line)

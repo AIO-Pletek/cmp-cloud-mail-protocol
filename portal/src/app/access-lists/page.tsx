@@ -78,7 +78,7 @@ export default function AccessListsPage() {
   };
 
   const items = entries || [];
-  const filteredItems = items.filter((e: any) => e.list_type === tab);
+  const filteredItems = items.filter((e: any) => e.listType === tab);
 
   const getEntryTypeIcon = (type: string) => {
     switch (type) {
@@ -131,7 +131,7 @@ export default function AccessListsPage() {
         <Card>
           <CardContent className="p-4 text-center">
             <p className="text-2xl font-bold text-blue-600">
-              {(stats?.by_type || []).filter((t: any) => t.entry_type === 'domain').reduce((a: number, b: any) => a + b.count, 0)}
+              {(stats?.byType || []).filter((t: any) => t.entryType === 'domain').reduce((a: number, b: any) => a + b.count, 0)}
             </p>
             <p className="text-xs text-gray-500">Domains</p>
           </CardContent>
@@ -249,9 +249,9 @@ export default function AccessListsPage() {
               <TableBody>
                 {filteredItems.map((item: any) => (
                   <TableRow key={item.id}>
-                    <TableCell>{getEntryTypeIcon(item.entry_type)}</TableCell>
+                    <TableCell>{getEntryTypeIcon(item.entryType)}</TableCell>
                     <TableCell>
-                      <Badge variant="outline">{item.entry_type}</Badge>
+                      <Badge variant="outline">{item.entryType}</Badge>
                     </TableCell>
                     <TableCell className="font-mono text-sm">{item.value}</TableCell>
                     <TableCell className="text-sm text-gray-500 max-w-[200px] truncate">{item.reason || '-'}</TableCell>
@@ -267,7 +267,7 @@ export default function AccessListsPage() {
                         )}
                       </button>
                     </TableCell>
-                    <TableCell className="text-sm text-gray-500">{formatDate(item.created_at)}</TableCell>
+                    <TableCell className="text-sm text-gray-500">{formatDate(item.createdAt)}</TableCell>
                     <TableCell className="text-right">
                       <Button
                         variant="ghost"
