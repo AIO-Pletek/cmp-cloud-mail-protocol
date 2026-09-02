@@ -22,14 +22,14 @@ const stats: StatCard[] = [
 ];
 
 export function StatsCards({ data }: { data?: Partial<Record<string, number>> }) {
-  const displayStats = stats.map((s) => ({
+  const displayStats = stats.map((s: any) => ({
     ...s,
     value: data?.[s.title.toLowerCase().replace(/\s/g, '_')] ?? s.value,
   }));
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-      {displayStats.map((stat) => (
+      {displayStats.map((stat: any) => (
         <Card key={stat.title}>
           <CardContent className="p-6">
             <div className="flex items-center justify-between">

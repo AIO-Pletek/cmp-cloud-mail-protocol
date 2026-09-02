@@ -13,7 +13,7 @@ from cmp.services import rspamd_service
 router = APIRouter(prefix="/api/v1/filters", tags=["Filters"])
 
 
-@router.post("/", response_model=FilterRuleRead, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=FilterRuleRead, status_code=status.HTTP_201_CREATED)
 async def create_rule(
     req: FilterRuleCreate,
     request: Request,
@@ -59,7 +59,7 @@ async def create_rule(
     return rule
 
 
-@router.get("/", response_model=list[FilterRuleRead])
+@router.get("", response_model=list[FilterRuleRead])
 async def list_rules(
     domain_id: str | None = Query(None),
     tenant: Tenant = Depends(get_current_user),

@@ -17,21 +17,28 @@ router = APIRouter(prefix="/api/v1/auth", tags=["Authentication"])
 async def register(req: RegisterRequest, request: Request, db: AsyncSession = Depends(get_db)):
     tenant = await register_tenant(db, req)
     await log_audit(db, tenant.id, tenant.email, "register", "tenant", tenant.id, ip_address=request.client.host if request.client else None)
-    return tenant
+    return TenantRead.model_validate(tenant, from_attributes=True).model_dump(by_alias=True)
 
 
-@router.post("/login", response_model=TokenPair)
+@router.post("/login")
 async def login(req: LoginRequest, request: Request, db: AsyncSession = Depends(get_db)):
     tenant = await authenticate_tenant(db, req.email, req.password)
     await log_audit(db, tenant.id, tenant.email, "login", "tenant", tenant.id, ip_address=request.client.host if request.client else None)
-    return create_token_pair(tenant)
+    tokens = create_token_pair(tenant)
+    tenant_data = TenantRead.model_validate(tenant)
+    return {
+        "accessToken": tokens.accessToken,
+        "refreshToken": tokens.refreshToken,
+        "tokenType": tokens.token_type,
+        "user": tenant_data.model_dump(by_alias=True)
+    }
 
 
-@router.post("/refresh", response_model=TokenPair)
+@router.post("/refresh")
 async def refresh(body: dict, db: AsyncSession = Depends(get_db)):
-    refresh_token = body.get("refresh_token")
+    refresh_token = body.get("refreshToken") or body.get("refresh_token")
     if not refresh_token:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="refresh_token is required")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="refreshToken is required")
     return await refresh_access_token(db, refresh_token)
 
 
@@ -53,4 +60,4 @@ async def change_password(
 
 @router.get("/me", response_model=TenantRead)
 async def get_me(tenant: Tenant = Depends(get_current_user)):
-    return tenant
+    return TenantRead.model_validate(tenant, from_attributes=True).model_dump(by_alias=True)

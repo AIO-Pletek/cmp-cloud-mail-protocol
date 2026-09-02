@@ -4,23 +4,40 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from cmp.database import get_db
 from cmp.models.tenant import Tenant
+
+async def require_admin_tenant(tenant):
+    if not (hasattr(tenant, "is_admin") and tenant.is_admin):
+        from fastapi import HTTPException
+        raise HTTPException(status_code=403, detail="Admin only")
+    return tenant
+
 from cmp.middleware.auth import get_current_user
 from cmp.services import report_service
 
 router = APIRouter(prefix="/api/v1/reports", tags=["Reports"])
 
 
+def parse_period(period: str) -> tuple[datetime, datetime]:
+    now = datetime.now(timezone.utc)
+    days = int(period.replace('d', '').replace('D', ''))
+    start = now - timedelta(days=days)
+    return start, now
+
+
 @router.get("/traffic")
 async def traffic_report(
+    period: str = Query("7d"),
     start_date: str | None = Query(None),
     end_date: str | None = Query(None),
     domain_id: str | None = Query(None),
     tenant: Tenant = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    now = datetime.now(timezone.utc)
-    start = datetime.fromisoformat(start_date) if start_date else now - timedelta(days=7)
-    end = datetime.fromisoformat(end_date) if end_date else now
+    if start_date and end_date:
+        start = datetime.fromisoformat(start_date)
+        end = datetime.fromisoformat(end_date)
+    else:
+        start, end = parse_period(period)
     return await report_service.get_traffic_report(db, tenant.id, start, end, domain_id)
 
 
@@ -53,20 +70,21 @@ async def domain_health(
 @router.get("/export")
 async def export_report(
     format: str = Query("csv"),
+    period: str = Query("7d"),
     start_date: str | None = Query(None),
     end_date: str | None = Query(None),
     domain_id: str | None = Query(None),
     tenant: Tenant = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    now = datetime.now(timezone.utc)
-    start = datetime.fromisoformat(start_date) if start_date else now - timedelta(days=7)
-    end = datetime.fromisoformat(end_date) if end_date else now
-    data = await report_service.get_traffic_report(db, tenant.id, start, end, domain_id)
-    content = report_service.export_report(data, format)
-    media_type = "text/csv" if format == "csv" else "application/octet-stream"
+    if start_date and end_date:
+        start = datetime.fromisoformat(start_date)
+        end = datetime.fromisoformat(end_date)
+    else:
+        start, end = parse_period(period)
+    csv_data = await report_service.get_export_report(db, tenant.id, start, end, domain_id)
     return StreamingResponse(
-        iter([content]),
-        media_type=media_type,
-        headers={"Content-Disposition": f"attachment; filename=report.{format}"},
+        iter([csv_data]),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=cmp-report.csv"}
     )

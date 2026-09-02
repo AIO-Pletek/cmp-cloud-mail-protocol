@@ -1,0 +1,461 @@
+"""Domain approval service — quarantine emails from unlisted domains, notify admin, release on approval."""
+from __future__ import annotations
+import asyncio
+import json
+import os
+import secrets
+import smtplib
+import subprocess
+from datetime import datetime, timezone
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from pathlib import Path
+
+import asyncpg
+
+SMTP_HOST = "127.0.0.1"
+SMTP_PORT = 25
+FROM_ADDR = "noreply@mailprotocol.cbncloud.net"
+PORTAL_URL = os.environ.get("PORTAL_URL", "https://mailprotocol.cbncloud.net")
+
+
+def _get_pg_password() -> str:
+    try:
+        for line in Path("/opt/cmp/.env").read_text().splitlines():
+            k, _, v = line.partition("=")
+            if k.strip() == "DB_PASSWORD":
+                return v.strip()
+    except OSError:
+        pass
+    return os.environ.get("DB_PASSWORD", "")
+
+
+async def _conn():
+    return await asyncpg.connect(
+        host="127.0.0.1", port=5432, user="cmp",
+        password=_get_pg_password(), database="cmp"
+    )
+
+
+CREATE_SQL = """
+CREATE TABLE IF NOT EXISTS policy_domain_approvals (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id VARCHAR(64) NOT NULL,
+    queue_id VARCHAR(128),
+    sender VARCHAR(512) NOT NULL,
+    recipient VARCHAR(512) NOT NULL,
+    sender_domain VARCHAR(255) NOT NULL,
+    subject VARCHAR(512) DEFAULT '',
+    direction VARCHAR(16) NOT NULL DEFAULT 'INBOUND',
+    status VARCHAR(20) NOT NULL DEFAULT 'pending',
+    approve_token VARCHAR(64) UNIQUE NOT NULL,
+    reject_token VARCHAR(64) UNIQUE NOT NULL,
+    admin_email VARCHAR(512) NOT NULL,
+    notified_at TIMESTAMPTZ,
+    actioned_at TIMESTAMPTZ,
+    actioned_by VARCHAR(255),
+    add_to_allowlist BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT policy_domain_approvals_status_check CHECK (status IN ('pending','approved','rejected','expired'))
+);
+CREATE INDEX IF NOT EXISTS idx_pda_tenant_status ON policy_domain_approvals(tenant_id, status);
+CREATE INDEX IF NOT EXISTS idx_pda_approve_token ON policy_domain_approvals(approve_token);
+CREATE INDEX IF NOT EXISTS idx_pda_reject_token ON policy_domain_approvals(reject_token);
+"""
+
+
+async def init_approval_tables():
+    c = await _conn()
+    try:
+        await c.execute(CREATE_SQL)
+    finally:
+        await c.close()
+
+
+async def get_tenant_admin_email(tenant_id: str) -> str | None:
+    c = await _conn()
+    try:
+        row = await c.fetchrow("SELECT email FROM tenants WHERE id=$1", tenant_id)
+        return str(row["email"]) if row else None
+    finally:
+        await c.close()
+
+
+async def find_pending(tenant_id: str, sender: str, recipient: str) -> dict | None:
+    """Return existing pending approval to avoid duplicate notifications."""
+    c = await _conn()
+    try:
+        row = await c.fetchrow(
+            "SELECT * FROM policy_domain_approvals WHERE tenant_id=$1 AND sender=$2 AND recipient=$3 AND status='pending' ORDER BY created_at DESC LIMIT 1",
+            tenant_id, sender.lower(), recipient.lower()
+        )
+        return dict(row) if row else None
+    finally:
+        await c.close()
+
+
+async def create_approval(
+    tenant_id: str, queue_id: str, sender: str, recipient: str,
+    sender_domain: str, subject: str, direction: str, admin_email: str
+) -> dict:
+    await init_approval_tables()
+    approve_token = secrets.token_urlsafe(32)
+    reject_token = secrets.token_urlsafe(32)
+    c = await _conn()
+    try:
+        row = await c.fetchrow(
+            """INSERT INTO policy_domain_approvals
+               (tenant_id, queue_id, sender, recipient, sender_domain, subject, direction,
+                approve_token, reject_token, admin_email)
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+               RETURNING *""",
+            tenant_id, queue_id, sender.lower(), recipient.lower(),
+            sender_domain.lower(), subject, direction.upper(),
+            approve_token, reject_token, admin_email
+        )
+        return dict(row)
+    finally:
+        await c.close()
+
+
+async def list_approvals(tenant_id: str, status: str | None = None) -> list[dict]:
+    await init_approval_tables()
+    c = await _conn()
+    try:
+        if status:
+            rows = await c.fetch(
+                "SELECT * FROM policy_domain_approvals WHERE tenant_id=$1 AND status=$2 ORDER BY created_at DESC",
+                tenant_id, status
+            )
+        else:
+            rows = await c.fetch(
+                "SELECT * FROM policy_domain_approvals WHERE tenant_id=$1 ORDER BY created_at DESC LIMIT 200",
+                tenant_id
+            )
+        return [dict(r) for r in rows]
+    finally:
+        await c.close()
+
+
+async def list_all_approvals(status: str | None = None) -> list[dict]:
+    """Admin: list across all tenants."""
+    await init_approval_tables()
+    c = await _conn()
+    try:
+        if status:
+            rows = await c.fetch(
+                "SELECT pda.*, t.name as tenant_name, t.email as tenant_email FROM policy_domain_approvals pda LEFT JOIN tenants t ON t.id=pda.tenant_id WHERE pda.status=$1 ORDER BY pda.created_at DESC",
+                status
+            )
+        else:
+            rows = await c.fetch(
+                "SELECT pda.*, t.name as tenant_name, t.email as tenant_email FROM policy_domain_approvals pda LEFT JOIN tenants t ON t.id=pda.tenant_id ORDER BY pda.created_at DESC LIMIT 500"
+            )
+        return [dict(r) for r in rows]
+    finally:
+        await c.close()
+
+
+async def get_approval_by_token(token: str, token_type: str) -> dict | None:
+    await init_approval_tables()
+    c = await _conn()
+    try:
+        col = "approve_token" if token_type == "approve" else "reject_token"
+        row = await c.fetchrow(f"SELECT * FROM policy_domain_approvals WHERE {col}=$1", token)
+        return dict(row) if row else None
+    finally:
+        await c.close()
+
+
+class ApprovalProcessingError(RuntimeError):
+    """Pending approval could not be safely applied to a live queue item."""
+
+
+async def process_approval(approval_id: str, action: str, actioned_by: str, add_to_allowlist: bool = False) -> dict:
+    """Apply only after the matching live hold message is found and acted on."""
+    if action not in ("approve", "reject"):
+        raise ApprovalProcessingError("Invalid approval action")
+    c = await _conn()
+    try:
+        row = await c.fetchrow("SELECT * FROM policy_domain_approvals WHERE id=$1 FOR UPDATE", approval_id)
+        if not row:
+            raise ValueError("Approval not found")
+        approval = dict(row)
+        if approval["status"] != "pending":
+            return {**approval, "message": f"Already {approval['status']}"}
+        queue_id = _find_hold_queue_id(approval["sender"], approval["recipient"], approval.get("created_at"), approval.get("queue_id"))
+        if not queue_id:
+            raise ApprovalProcessingError("Approval remains pending: matching message is not present in the Postfix hold queue")
+        acted = _postfix_release(queue_id) if action == "approve" else _postfix_delete(queue_id)
+        if not acted:
+            raise ApprovalProcessingError(f"Postfix could not {action} queue message {queue_id}; approval remains pending")
+        new_status = "approved" if action == "approve" else "rejected"
+        await c.execute("UPDATE policy_domain_approvals SET status=$1, queue_id=$2, actioned_at=NOW(), actioned_by=$3, add_to_allowlist=$4, updated_at=NOW() WHERE id=$5", new_status, queue_id, actioned_by, add_to_allowlist if action == "approve" else False, approval["id"])
+        if add_to_allowlist and action == "approve":
+            from cmp.policy.domain_policy_store import add_rule
+            await add_rule("tenant", approval["tenant_id"], "allow", approval["sender_domain"], f"Auto-approved via domain approval {str(approval['id'])[:8]}")
+        print(f"[DomainApproval] {action} queue_id={queue_id} result={acted} approval={str(approval['id'])[:8]}")
+        return {**approval, "status": new_status, "queue_id": queue_id, "message": f"Email {action}d successfully"}
+    finally:
+        await c.close()
+
+
+def _postfix_release(queue_id: str) -> bool:
+    try:
+        result = subprocess.run(["postsuper", "-r", queue_id], capture_output=True, text=True, timeout=10)
+        if result.returncode != 0:
+            print(f"[DomainApproval] postsuper -r failed queue_id={queue_id} rc={result.returncode} stdout={result.stdout.strip()} stderr={result.stderr.strip()}")
+            return False
+        verify = subprocess.run(["postqueue", "-j"], capture_output=True, text=True, timeout=10)
+        for line in verify.stdout.splitlines():
+            try:
+                item = json.loads(line)
+                if item.get("queue_name") == "hold" and item.get("queue_id") == queue_id:
+                    print(f"[DomainApproval] release verification failed queue_id={queue_id}")
+                    return False
+            except Exception:
+                continue
+        return True
+    except Exception as e:
+        print(f"[DomainApproval] release exception queue_id={queue_id}: {e}")
+        return False
+
+
+def _postfix_delete(queue_id: str) -> bool:
+    try:
+        result = subprocess.run(["postsuper", "-d", queue_id], capture_output=True, text=True, timeout=10)
+        return result.returncode == 0
+    except Exception:
+        return False
+
+
+def _find_hold_queue_id(sender: str, recipient: str, created_at=None, preferred_queue_id: str | None = None) -> str:
+    """Find matching live Postfix hold message, preferring closest arrival time."""
+    matches = []
+    try:
+        result = subprocess.run(["postqueue", "-j"], capture_output=True, text=True, timeout=10)
+        if result.returncode != 0:
+            return ""
+        for line in result.stdout.strip().splitlines():
+            try:
+                msg = json.loads(line)
+                if msg.get("queue_name") != "hold":
+                    continue
+                if msg.get("sender", "").lower() != sender.lower():
+                    continue
+                if any(r.get("address", "").lower() == recipient.lower() for r in msg.get("recipients", [])):
+                    matches.append(msg)
+            except Exception:
+                continue
+    except Exception:
+        return ""
+    if not matches:
+        return ""
+    if preferred_queue_id:
+        for msg in matches:
+            if msg.get("queue_id") == preferred_queue_id:
+                return preferred_queue_id
+    if created_at is not None:
+        try:
+            target_ts = created_at.timestamp()
+            matches.sort(key=lambda m: abs(float(m.get("arrival_time", target_ts)) - target_ts))
+        except Exception:
+            pass
+    return matches[0].get("queue_id", "")
+
+
+def _send_sender_notification(sender_email: str, recipient_email: str, portal_url: str = PORTAL_URL) -> bool:
+    """Notify the original sender that their email is pending domain approval."""
+    subject = "Your email is pending approval"
+    html = f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8"></head>
+<body style="font-family:-apple-system,sans-serif;background:#f3f4f6;padding:20px">
+<div style="background:#fff;border-radius:12px;max-width:520px;margin:0 auto;padding:32px;box-shadow:0 4px 20px rgba(0,0,0,.08)">
+  <div style="background:#f59e0b;border-radius:8px;padding:4px 12px;display:inline-block;margin-bottom:20px">
+    <span style="color:#fff;font-size:13px;font-weight:600">Pending Review</span>
+  </div>
+  <h2 style="color:#111827;margin:0 0 12px">Your email is pending approval</h2>
+  <p style="color:#6b7280;font-size:14px">Your email to <strong>{recipient_email}</strong> has been held for domain approval by the recipient&apos;s mail administrator.</p>
+  <p style="color:#6b7280;font-size:14px">You will be notified once the administrator approves or rejects your email. No action is required from you at this time.</p>
+  <div style="background:#f9fafb;border-radius:8px;padding:16px;margin-top:20px;font-size:13px;color:#6b7280">
+    <strong>What happens next?</strong><br>
+    If approved, your email will be delivered normally.<br>
+    If rejected, your email will be permanently deleted.
+  </div>
+</div>
+</body></html>"""
+    plain = f"""Your email to {recipient_email} is pending domain approval.
+
+The recipient's mail administrator has been notified. You will receive a follow-up once a decision is made.
+
+No action is required from you at this time."""
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = subject
+    msg["From"] = FROM_ADDR
+    msg["To"] = sender_email
+    msg.attach(MIMEText(plain, "plain"))
+    msg.attach(MIMEText(html, "html"))
+    try:
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=10) as server:
+            server.sendmail(FROM_ADDR, sender_email, msg.as_string())
+        return True
+    except Exception as e:
+        print(f"[DomainApproval] Sender notification failed: {e}")
+        return False
+
+
+def _send_notification_email(to_email: str, approval: dict) -> bool:
+    approve_url = f"{PORTAL_URL}/api/v1/policy/domain-approvals/action?token={approval['approve_token']}&action=approve"
+    reject_url = f"{PORTAL_URL}/api/v1/policy/domain-approvals/action?token={approval['reject_token']}&action=reject"
+    portal_url = f"{PORTAL_URL}/domain-approvals"
+    direction_label = "Incoming" if approval.get("direction", "INBOUND") == "INBOUND" else "Outgoing"
+
+    subject = f"[Domain Approval] {direction_label} email from {approval['sender_domain']} is waiting for review"
+
+    html = f"""<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><style>
+body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f3f4f6;margin:0;padding:20px}}
+.card{{background:#fff;border-radius:12px;max-width:560px;margin:0 auto;overflow:hidden;box-shadow:0 4px 20px rgba(0,0,0,.08)}}
+.header{{background:linear-gradient(135deg,#1e40af,#3b82f6);padding:28px 32px}}
+.header h1{{color:#fff;margin:0;font-size:20px;font-weight:600}}
+.header p{{color:#bfdbfe;margin:6px 0 0;font-size:14px}}
+.body{{padding:28px 32px}}
+.label{{font-size:11px;font-weight:600;text-transform:uppercase;color:#6b7280;margin-bottom:4px}}
+.value{{font-size:15px;color:#111827;margin-bottom:18px;word-break:break-all}}
+.badge{{display:inline-block;padding:3px 10px;border-radius:20px;font-size:12px;font-weight:600}}
+.badge-inbound{{background:#dbeafe;color:#1e40af}}
+.badge-outbound{{background:#d1fae5;color:#065f46}}
+.actions{{display:flex;gap:12px;margin:24px 0 0}}
+.btn{{flex:1;text-align:center;padding:14px;border-radius:8px;text-decoration:none;font-weight:600;font-size:15px}}
+.btn-approve{{background:#10b981;color:#fff}}
+.btn-reject{{background:#ef4444;color:#fff}}
+.footer{{background:#f9fafb;padding:16px 32px;text-align:center;border-top:1px solid #e5e7eb}}
+.footer a{{color:#3b82f6;text-decoration:none;font-size:13px}}
+</style></head>
+<body>
+<div class="card">
+  <div class="header">
+    <h1>Email Pending Approval</h1>
+    <p>An email from an unlisted domain is waiting for your review</p>
+  </div>
+  <div class="body">
+    <div class="label">Direction</div>
+    <div class="value"><span class="badge badge-{'inbound' if approval.get('direction','INBOUND')=='INBOUND' else 'outbound'}">{direction_label}</span></div>
+    <div class="label">From</div>
+    <div class="value">{approval['sender']}</div>
+    <div class="label">Domain</div>
+    <div class="value"><strong>{approval['sender_domain']}</strong></div>
+    <div class="label">To</div>
+    <div class="value">{approval['recipient']}</div>
+    <div class="label">Subject</div>
+    <div class="value">{approval.get('subject','(not available)') or '(not available)'}</div>
+    <div class="label">Received at</div>
+    <div class="value">{approval.get('created_at','')}</div>
+    <p style="color:#6b7280;font-size:14px;margin:20px 0 0">Approve to release the email to the recipient's inbox. Reject to permanently delete it from the queue.</p>
+    <div class="actions">
+      <a href="{approve_url}" class="btn btn-approve">Review approval</a>
+      <a href="{reject_url}" class="btn btn-reject">Review rejection</a>
+    </div>
+  </div>
+  <div class="footer">
+    <a href="{portal_url}">Manage all pending approvals in portal</a>
+  </div>
+</div>
+</body></html>"""
+
+    plain = f"""Email from unlisted domain pending approval.
+
+Direction: {direction_label}
+From: {approval['sender']}
+Domain: {approval['sender_domain']}
+To: {approval['recipient']}
+
+Review approval: {approve_url}
+Review rejection: {reject_url}
+
+Manage in portal: {portal_url}
+"""
+
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = subject
+    msg["From"] = FROM_ADDR
+    msg["To"] = to_email
+    msg.attach(MIMEText(plain, "plain"))
+    msg.attach(MIMEText(html, "html"))
+
+    try:
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=10) as server:
+            server.sendmail(FROM_ADDR, to_email, msg.as_string())
+        return True
+    except Exception as e:
+        print(f"[DomainApproval] Email send failed: {e}")
+        return False
+
+
+async def create_and_notify(
+    tenant_id: str, queue_id: str, sender: str, recipient: str,
+    sender_domain: str, subject: str, direction: str
+) -> dict | None:
+    """Main entry point called from policy_daemon. Creates approval record and sends email."""
+    await init_approval_tables()
+
+    # Deduplicate: don't spam admin if same sender→recipient already pending
+    existing = await find_pending(tenant_id, sender, recipient)
+    if existing:
+        # If existing record has no queue_id, retry resolving it in background
+        if not existing.get('queue_id'):
+            asyncio.ensure_future(
+                _update_queue_id_from_hold(str(existing['id']), sender, recipient, existing.get('created_at'))
+            )
+        return existing
+
+    admin_email = await get_tenant_admin_email(tenant_id)
+    if not admin_email:
+        return None
+
+    approval = await create_approval(
+        tenant_id, queue_id, sender, recipient,
+        sender_domain, subject, direction, admin_email
+    )
+
+    # Send admin notification in background
+    loop = asyncio.get_event_loop()
+    loop.run_in_executor(None, _send_notification_email, admin_email, approval)
+
+    # Deliberately do not notify the original sender or recipient.
+    # Pending-review notifications are sent only to the tenant mail administrator
+    # to avoid turning the gateway into an unsolicited mail source.
+
+    # Mark notified
+    c = await _conn()
+    try:
+        await c.execute("UPDATE policy_domain_approvals SET notified_at=NOW() WHERE id=$1", approval["id"])
+    finally:
+        await c.close()
+
+    # Background: resolve real queue_id from hold queue and update record
+    asyncio.ensure_future(_update_queue_id_from_hold(str(approval["id"]), sender, recipient, approval.get("created_at")))
+
+    return approval
+
+
+async def _update_queue_id_from_hold(approval_id: str, sender: str, recipient: str, approval_created_at=None):
+    """Wait briefly then scan hold queue to find and store the queue_id."""
+    await asyncio.sleep(3)
+    for attempt in range(12):
+        qid = _find_hold_queue_id(sender, recipient, approval_created_at)
+        if qid:
+            c = await _conn()
+            try:
+                await c.execute(
+                    "UPDATE policy_domain_approvals SET queue_id=$1, updated_at=NOW() WHERE id=$2",
+                    qid, approval_id
+                )
+            finally:
+                await c.close()
+            print(f"[DomainApproval] Resolved queue_id={qid} for approval {approval_id[:8]} (attempt {attempt+1})")
+            return
+        await asyncio.sleep(5)
+    print(f"[DomainApproval] Could not resolve queue_id for approval {approval_id[:8]} after 12 attempts")

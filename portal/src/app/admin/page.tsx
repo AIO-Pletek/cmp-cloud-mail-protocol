@@ -37,7 +37,7 @@ export default function AdminPage() {
 
       {/* System Stats */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        {systemStats.map((stat) => (
+        {systemStats.map((stat: any) => (
           <Card key={stat.label}>
             <CardContent className="p-6">
               <div className="flex items-center justify-between">
@@ -66,7 +66,7 @@ export default function AdminPage() {
         <CardHeader><CardTitle>Recent Tenant Activity</CardTitle></CardHeader>
         <CardContent>
           <div className="space-y-4">
-            {recentActivity.map((activity) => (
+            {recentActivity.map((activity: any) => (
               <div key={activity.id} className="flex items-center gap-3 p-3 rounded-lg hover:bg-gray-50">
                 <div className="w-8 h-8 rounded-full bg-primary-100 flex items-center justify-center flex-shrink-0">
                   <span className="text-xs font-semibold text-primary-700">{activity.tenant.charAt(0)}</span>

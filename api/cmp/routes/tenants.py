@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from pydantic import BaseModel
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -11,7 +12,7 @@ from cmp.middleware.audit import log_audit
 router = APIRouter(prefix="/api/v1/tenants", tags=["Tenants"])
 
 
-@router.get("/", response_model=list[TenantRead])
+@router.get("", response_model=list[TenantRead])
 async def list_tenants(
     admin: Tenant = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
@@ -101,3 +102,62 @@ async def update_branding(
     await log_audit(db, current.id, current.email, "update_branding", "tenant", tenant_id, details=update_data, ip_address=request.client.host if request.client else None)
     await db.refresh(tenant)
     return tenant
+
+
+class CreateTenantRequest(BaseModel):
+    name: str
+    email: str
+    password: str
+    plan: str = "starter"
+
+
+@router.post("", status_code=status.HTTP_201_CREATED)
+async def create_tenant(
+    req: CreateTenantRequest,
+    admin: Tenant = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    from cmp.services.auth_service import hash_password
+    import uuid
+    existing = await db.execute(select(Tenant).where(Tenant.email == req.email))
+    if existing.scalar_one_or_none():
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already registered")
+    tenant = Tenant(
+        id=str(uuid.uuid4()),
+        name=req.name,
+        slug=req.email.split("@")[0],
+        email=req.email,
+        password_hash=hash_password(req.password),
+        plan=req.plan,
+        api_key=f"cmp_{uuid.uuid4().hex[:24]}",
+    )
+    db.add(tenant)
+    await db.flush()
+    await db.refresh(tenant)
+    return tenant
+
+
+@router.post("/{tenant_id}/impersonate")
+async def impersonate_tenant(
+    tenant_id: str,
+    admin: Tenant = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(select(Tenant).where(Tenant.id == tenant_id))
+    tenant = result.scalar_one_or_none()
+    if not tenant:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
+    from cmp.services.auth_service import create_token_pair
+    tokens = create_token_pair(tenant)
+    return {
+        "accessToken": tokens.accessToken,
+        "refreshToken": tokens.refreshToken,
+        "user": {
+            "id": tenant.id,
+            "name": tenant.name,
+            "email": tenant.email,
+            "plan": tenant.plan,
+            "isAdmin": tenant.is_admin,
+        },
+        "impersonatedBy": admin.email,
+    }

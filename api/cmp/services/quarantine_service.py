@@ -145,19 +145,20 @@ async def get_stats(db: AsyncSession, tenant_id: str) -> dict:
     total_result = await db.execute(select(func.count()).select_from(base_query.subquery()))
     total = total_result.scalar() or 0
 
+    status_counts = {}
     for stat_status in ["pending", "released", "deleted", "expired"]:
         q = select(func.count()).select_from(base_query.where(Quarantine.status == stat_status).subquery())
         r = await db.execute(q)
-        locals()[stat_status] = r.scalar() or 0
+        status_counts[stat_status] = r.scalar() or 0
 
     avg_result = await db.execute(select(func.avg(Quarantine.spam_score)).select_from(base_query.subquery()))
     avg_score = avg_result.scalar() or 0.0
 
     return {
         "total": total,
-        "pending": pending,
-        "released": released,
-        "deleted": deleted,
-        "expired": expired,
+        "pending": status_counts.get("pending", 0),
+        "released": status_counts.get("released", 0),
+        "deleted": status_counts.get("deleted", 0),
+        "expired": status_counts.get("expired", 0),
         "avg_spam_score": round(float(avg_score), 2),
     }

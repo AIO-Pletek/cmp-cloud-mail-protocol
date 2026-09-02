@@ -110,7 +110,7 @@ export default function FiltersPage() {
                   </TableCell>
                 </TableRow>
               ) : filters && filters.length > 0 ? (
-                filters.map((filter) => (
+                filters.map((filter: any) => (
                   <TableRow key={filter.id}>
                     <TableCell className="font-mono text-sm">{filter.pattern}</TableCell>
                     <TableCell>
@@ -132,7 +132,7 @@ export default function FiltersPage() {
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex items-center justify-end gap-2">
-                        <Button variant="ghost" size="sm" onClick={() => { setEditId(filter.id); setForm({ ...form, ...filter }); setAddOpen(true); }}>
+                        <Button variant="ghost" size="sm" onClick={() => { setEditId(filter.id); setForm({ ...form, ...(filter as any) }); setAddOpen(true); }}>
                           <Edit className="w-4 h-4" />
                         </Button>
                         <Button variant="ghost" size="sm" onClick={() => setDeleteId(filter.id)}>
@@ -169,7 +169,7 @@ export default function FiltersPage() {
                   <SelectValue placeholder="Select domain (optional)" />
                 </SelectTrigger>
                 <SelectContent>
-                  {domains?.map((d) => (
+                  {domains?.map((d: any) => (
                     <SelectItem key={d.id} value={d.id}>{d.domainName}</SelectItem>
                   ))}
                 </SelectContent>

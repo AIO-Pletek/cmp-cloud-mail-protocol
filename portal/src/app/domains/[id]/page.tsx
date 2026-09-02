@@ -1,37 +1,84 @@
 'use client';
 
-import { useQuery } from '@tanstack/react-query';
+import { useState } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useParams } from 'next/navigation';
 import { cmpApi } from '@/lib/api';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Switch } from '@/components/ui/switch';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { TrafficChart } from '@/components/dashboard/traffic-chart';
-import { CheckCircle, XCircle, Copy, ArrowLeft, Loader2 } from 'lucide-react';
+import { CheckCircle, XCircle, Copy, ArrowLeft, Loader2, Key, FileText, Mail } from 'lucide-react';
 import { formatNumber, formatDate } from '@/lib/utils';
 import Link from 'next/link';
 import toast from 'react-hot-toast';
 
-interface DnsRecord {
-  name: string;
-  value: string;
-  ok: boolean;
-  type: string;
+// Convert PEM public key to DNS DKIM record format
+function pemToDkimRecord(pem: string): string {
+  if (!pem) return '';
+  // Remove PEM headers and newlines
+  const base64 = pem
+    .replace('-----BEGIN PUBLIC KEY-----', '')
+    .replace('-----END PUBLIC KEY-----', '')
+    .replace(/\s/g, '');
+  return `v=DKIM1; h=sha256; k=rsa; p=${base64}`;
 }
 
 export default function DomainDetailPage() {
   const params = useParams();
   const domainId = params.id as string;
+  const [showDkimRecord, setShowDkimRecord] = useState(false);
+  const queryClient = useQueryClient();
 
   const { data: domain, isLoading } = useQuery({
     queryKey: ['domain', domainId],
+    queryFn: () => cmpApi.domains.get(domainId),
+  });
+
+  const { data: dnsCheck } = useQuery({
+    queryKey: ['dns-check', domainId],
     queryFn: () => cmpApi.domains.dnsCheck(domainId),
+    enabled: !!domain,
   });
 
   const { data: filters } = useQuery({
     queryKey: ['filters', domainId],
     queryFn: () => cmpApi.filters.list(domainId),
+  });
+
+  const { data: approvalData, isLoading: approvalLoading } = useQuery({
+    queryKey: ['domain-approval', domainId],
+    queryFn: () => cmpApi.domains.getApproval(domainId),
+    enabled: !!domainId,
+  });
+
+  const approvalMutation = useMutation({
+    mutationFn: (enabled: boolean) => cmpApi.domains.setApproval(domainId, enabled),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['domain-approval', domainId] });
+      toast.success('Mail policy updated');
+    },
+    onError: () => {
+      toast.error('Failed to update mail policy');
+    },
+  });
+
+  const { data: apData, isLoading: apLoading } = useQuery({
+    queryKey: ['domain-attachment-password', domainId],
+    queryFn: () => cmpApi.domains.getAttachmentPassword(domainId),
+    enabled: !!domainId,
+  });
+
+  const apMutation = useMutation({
+    mutationFn: (enabled: boolean) => cmpApi.domains.setAttachmentPassword(domainId, enabled),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['domain-attachment-password', domainId] });
+      toast.success('Attachment policy updated');
+    },
+    onError: () => {
+      toast.error('Failed to update attachment policy');
+    },
   });
 
   const copyToClipboard = (text: string) => {
@@ -58,12 +105,18 @@ export default function DomainDetailPage() {
     );
   }
 
-  const dnsRecords: DnsRecord[] = [
-    { name: 'MX Record', value: domain.mxRecord || 'Not configured', ok: !!domain.mxRecord, type: 'MX' },
-    { name: 'SPF Record', value: domain.spfRecord || 'Not configured', ok: !!domain.spfRecord, type: 'TXT' },
-    { name: 'DKIM Selector', value: domain.dkimPublicKey ? `${domain.dkimSelector}._domainkey.${domain.domainName}` : 'Not configured', ok: !!domain.dkimPublicKey, type: 'TXT' },
-    { name: 'DMARC Record', value: domain.dmarcRecord || 'Not configured', ok: !!domain.dmarcRecord, type: 'TXT' },
+  const dkimRecord = domain.dkimPublicKey ? pemToDkimRecord(domain.dkimPublicKey) : '';
+  const dkimHostName = domain.dkimSelector ? `${domain.dkimSelector}._domainkey.${domain.domainName}` : '';
+
+  const dnsRecords = [
+    { name: 'MX Record', value: domain.mxRecord || 'Not configured', ok: dnsCheck?.mxOk ?? !!domain.mxRecord, type: 'MX', host: domain.domainName },
+    { name: 'SPF Record', value: domain.spfRecord || 'Not configured', ok: dnsCheck?.spfOk ?? !!domain.spfRecord, type: 'TXT', host: domain.domainName },
+    { name: 'DKIM Record', value: dkimRecord || 'Not configured', ok: dnsCheck?.dkimOk ?? !!domain.dkimPublicKey, type: 'TXT', host: dkimHostName },
+    { name: 'DMARC Record', value: domain.dmarcRecord || 'Not configured', ok: dnsCheck?.dmarcOk ?? !!domain.dmarcRecord, type: 'TXT', host: `_dmarc.${domain.domainName}` },
   ];
+
+  const approvalEnabled: boolean = approvalData?.approvalRequired ?? false;
+  const apRequired: boolean = apData?.attachmentPasswordRequired ?? true;
 
   return (
     <div className="space-y-6">
@@ -78,6 +131,11 @@ export default function DomainDetailPage() {
             <Badge variant={domain.isVerified ? 'success' : 'warning'}>
               {domain.isVerified ? 'Verified' : 'Pending Verification'}
             </Badge>
+            <Link href={`/domains/${domainId}/setup`}>
+              <Button variant="outline" size="sm" className="ml-2 border-blue-300 text-blue-700 hover:bg-blue-50">
+                Setup Wizard
+              </Button>
+            </Link>
           </div>
           <p className="text-sm text-gray-500 mt-1">
             {formatNumber(domain.emailCount)} emails processed · {formatNumber(domain.spamBlocked)} spam blocked
@@ -107,40 +165,173 @@ export default function DomainDetailPage() {
         </Card>
       </div>
 
+      {/* Mail Policy */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Mail className="w-5 h-5" />
+            Mail Policy
+          </CardTitle>
+          <p className="text-sm text-gray-500 mt-1">
+            Control whether incoming emails to this domain require admin approval before delivery
+          </p>
+        </CardHeader>
+        <CardContent>
+          {approvalLoading ? (
+            <div className="flex items-center gap-2 py-2">
+              <Loader2 className="w-4 h-4 animate-spin text-gray-400" />
+              <span className="text-sm text-gray-500">Loading policy...</span>
+            </div>
+          ) : (
+            <div className="flex items-center justify-between rounded-lg border p-4">
+              <div className="space-y-1">
+                <p className="text-sm font-medium text-gray-900">Domain Approval Required</p>
+                <p className="text-xs text-gray-500">
+                  When enabled, emails to this domain are held for review. When disabled, emails are delivered directly.
+                </p>
+                <div className="mt-2">
+                  {approvalEnabled ? (
+                    <Badge variant="success">Approval Required</Badge>
+                  ) : (
+                    <Badge variant="outline">Direct Delivery</Badge>
+                  )}
+                </div>
+              </div>
+              <Switch
+                checked={approvalEnabled}
+                disabled={approvalMutation.isPending}
+                onCheckedChange={(checked: boolean) => approvalMutation.mutate(checked)}
+                className={approvalEnabled ? 'data-[state=checked]:bg-green-500' : ''}
+                aria-label="Toggle domain approval requirement"
+              />
+            </div>
+          )}
+
+          <div className="flex items-center justify-between rounded-lg border p-4 mt-4">
+            <div className="space-y-1">
+              <p className="text-sm font-medium text-gray-900">Attachment Password Required</p>
+              <p className="text-xs text-gray-500">
+                When enabled, emails with attachments that are not password-protected are rejected. When disabled, attachments pass without a password.
+              </p>
+              <div className="mt-2">
+                {apRequired ? (
+                  <Badge variant="success">Password Required</Badge>
+                ) : (
+                  <Badge variant="outline">Password Not Required</Badge>
+                )}
+              </div>
+            </div>
+            <Switch
+              checked={apRequired}
+              disabled={apLoading || apMutation.isPending}
+              onCheckedChange={(checked: boolean) => apMutation.mutate(checked)}
+              className={apRequired ? 'data-[state=checked]:bg-green-500' : ''}
+              aria-label="Toggle attachment password requirement"
+            />
+          </div>
+        </CardContent>
+      </Card>
+
       {/* DNS Records */}
       <Card>
         <CardHeader>
-          <CardTitle>DNS Records</CardTitle>
+          <CardTitle className="flex items-center gap-2">
+            <FileText className="w-5 h-5" />
+            DNS Records - Add These to Your DNS
+          </CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="space-y-4">
-            {dnsRecords.map((record) => (
-              <div key={record.name} className="flex items-start justify-between p-4 rounded-lg border border-gray-100 bg-gray-50">
-                <div className="flex items-start gap-3">
-                  {record.ok ? (
-                    <CheckCircle className="w-5 h-5 text-green-500 mt-0.5 flex-shrink-0" />
-                  ) : (
-                    <XCircle className="w-5 h-5 text-red-500 mt-0.5 flex-shrink-0" />
-                  )}
-                  <div>
-                    <p className="font-medium text-gray-900">{record.name}</p>
-                    <p className="text-sm text-gray-500 mt-0.5 font-mono break-all">{record.value}</p>
-                    <p className="text-xs text-gray-400 mt-1">Type: {record.type}</p>
+          <div className="space-y-6">
+            {dnsRecords.map((record: any) => (
+              <div key={record.name} className="border rounded-lg overflow-hidden">
+                {/* Header */}
+                <div className="flex items-center justify-between p-4 bg-gray-50 border-b">
+                  <div className="flex items-center gap-3">
+                    {record.ok ? (
+                      <CheckCircle className="w-5 h-5 text-green-500" />
+                    ) : (
+                      <XCircle className="w-5 h-5 text-red-500" />
+                    )}
+                    <div>
+                      <p className="font-medium text-gray-900">{record.name}</p>
+                      <p className="text-xs text-gray-500">Type: {record.type}</p>
+                    </div>
                   </div>
+                  <Badge variant={record.ok ? 'success' : 'warning'}>
+                    {record.ok ? 'Configured' : 'Not Configured'}
+                  </Badge>
                 </div>
-                {record.value !== 'Not configured' && (
-                  <Button variant="ghost" size="sm" onClick={() => copyToClipboard(record.value)}>
-                    <Copy className="w-4 h-4" />
-                  </Button>
-                )}
+
+                {/* Content */}
+                <div className="p-4 space-y-3">
+                  {/* Host/Name */}
+                  {record.host && (
+                    <div>
+                      <p className="text-xs font-medium text-gray-500 mb-1">Host/Name:</p>
+                      <div className="flex items-center gap-2 bg-white p-2 rounded border">
+                        <code className="text-sm font-mono flex-1 text-gray-900">{record.host}</code>
+                        <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => copyToClipboard(record.host!)}>
+                          <Copy className="w-3 h-3" />
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Value */}
+                  <div>
+                    <p className="text-xs font-medium text-gray-500 mb-1">Value:</p>
+                    <div className="flex items-start gap-2 bg-white p-2 rounded border">
+                      <code className="text-xs font-mono flex-1 text-gray-900 break-all whitespace-pre-wrap max-h-32 overflow-y-auto">
+                        {record.value}
+                      </code>
+                      <Button variant="ghost" size="icon" className="h-6 w-6 shrink-0" onClick={() => copyToClipboard(record.value)}>
+                        <Copy className="w-3 h-3" />
+                      </Button>
+                    </div>
+                  </div>
+
+                  {/* DKIM specific instructions */}
+                  {record.name === 'DKIM Record' && dkimRecord && (
+                    <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                      <div className="flex items-center gap-2 mb-2">
+                        <Key className="w-4 h-4 text-blue-600" />
+                        <p className="text-sm font-medium text-blue-900">How to add DKIM record:</p>
+                      </div>
+                      <ol className="text-xs text-blue-800 space-y-1 list-decimal list-inside">
+                        <li>Go to your DNS management panel (Plesk/cPanel/Cloudflare)</li>
+                        <li>Add a new TXT record</li>
+                        <li>Set Name/Host to: <code className="bg-blue-100 px-1 rounded">{dkimHostName}</code></li>
+                        <li>Set Value to the DKIM record above</li>
+                        <li>Save and wait 5-60 minutes for DNS propagation</li>
+                      </ol>
+                    </div>
+                  )}
+
+                  {/* SPF specific instructions */}
+                  {record.name === 'SPF Record' && !record.ok && (
+                    <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                      <p className="text-xs text-blue-800">
+                        <strong>Recommended SPF record:</strong><br/>
+                        <code className="bg-blue-100 px-1 rounded">v=spf1 ip4:103.24.12.21 include:_spf.google.com ~all</code>
+                      </p>
+                    </div>
+                  )}
+
+                  {/* DMARC specific instructions */}
+                  {record.name === 'DMARC Record' && !record.ok && (
+                    <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                      <p className="text-xs text-blue-800">
+                        <strong>Recommended DMARC record:</strong><br/>
+                        <code className="bg-blue-100 px-1 rounded">v=DMARC1; p=quarantine; rua=mailto:dmarc@{domain.domainName}; fo=1</code>
+                      </p>
+                    </div>
+                  )}
+                </div>
               </div>
             ))}
           </div>
         </CardContent>
       </Card>
-
-      {/* Traffic Chart */}
-      <TrafficChart />
 
       {/* Filter Rules */}
       <Card>
@@ -164,7 +355,7 @@ export default function DomainDetailPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filters.map((filter) => (
+                {filters.map((filter: any) => (
                   <TableRow key={filter.id}>
                     <TableCell className="font-mono text-sm">{filter.pattern}</TableCell>
                     <TableCell><Badge variant="info">{filter.ruleType}</Badge></TableCell>

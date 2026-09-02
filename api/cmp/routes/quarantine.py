@@ -10,7 +10,7 @@ from cmp.services import quarantine_service
 router = APIRouter(prefix="/api/v1/quarantine", tags=["Quarantine"])
 
 
-@router.get("/")
+@router.get("")
 async def list_quarantine(
     domain_id: str | None = Query(None),
     status_filter: str | None = Query(None, alias="status"),

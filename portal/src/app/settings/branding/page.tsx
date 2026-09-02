@@ -90,7 +90,7 @@ export default function BrandingPage() {
                 { label: 'Primary Color', value: primaryColor, setter: setPrimaryColor },
                 { label: 'Secondary Color', value: secondaryColor, setter: setSecondaryColor },
                 { label: 'Accent Color', value: accentColor, setter: setAccentColor },
-              ].map((color) => (
+              ].map((color: any) => (
                 <div key={color.label} className="flex items-center gap-3">
                   <label className="w-32 text-sm font-medium text-gray-700">{color.label}</label>
                   <input
@@ -154,7 +154,7 @@ export default function BrandingPage() {
                   {/* Content */}
                   <div className="p-3 space-y-2">
                     <div className="flex gap-2">
-                      {[1, 2, 3].map((i) => (
+                      {[1, 2, 3].map((i: any) => (
                         <div key={i} className="flex-1 h-14 rounded border border-gray-200 p-2">
                           <div className="w-full h-1.5 bg-gray-100 rounded mb-1" />
                           <div className="text-xs font-bold text-gray-700">1,234</div>

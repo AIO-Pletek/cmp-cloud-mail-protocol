@@ -41,7 +41,7 @@ export function TopDomains({ data }: { data?: TopDomain[] }) {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {domains.map((d) => (
+            {domains.map((d: any) => (
               <TableRow key={d.domain}>
                 <TableCell className="font-medium">{d.domain}</TableCell>
                 <TableCell className="text-right">{formatNumber(d.emails)}</TableCell>

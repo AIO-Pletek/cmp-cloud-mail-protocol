@@ -63,7 +63,7 @@ export default function ReportsPage() {
         </div>
         <div className="flex items-center gap-3">
           <div className="flex items-center bg-gray-100 rounded-lg p-1">
-            {['7d', '30d', '90d'].map((p) => (
+            {['7d', '30d', '90d'].map((p: any) => (
               <button
                 key={p}
                 onClick={() => setPeriod(p)}
@@ -83,7 +83,7 @@ export default function ReportsPage() {
       {/* Tabs */}
       <div className="border-b border-gray-200">
         <nav className="flex gap-6">
-          {tabs.map((tab) => (
+          {tabs.map((tab: any) => (
             <button
               key={tab.value}
               onClick={() => setActiveTab(tab.value)}
@@ -107,7 +107,7 @@ export default function ReportsPage() {
               { label: 'Total Outgoing', value: traffic?.totalOutgoing ?? 0, color: 'text-green-600' },
               { label: 'Total Spam', value: traffic?.totalSpam ?? 0, color: 'text-red-600' },
               { label: 'Total Virus', value: traffic?.totalVirus ?? 0, color: 'text-yellow-600' },
-            ].map((s) => (
+            ].map((s: any) => (
               <Card key={s.label}>
                 <CardContent className="p-4">
                   <p className="text-sm text-gray-500">{s.label}</p>
@@ -116,7 +116,7 @@ export default function ReportsPage() {
               </Card>
             ))}
           </div>
-          <TrafficChart data={traffic?.byHour?.map((h) => ({ hour: h.hour, incoming: h.incoming, outgoing: h.outgoing, spam: h.spam }))} />
+          <TrafficChart data={traffic?.byHour?.map((h: any) => ({ hour: h.hour, incoming: h.incoming, outgoing: h.outgoing, spam: h.spam }))} />
           {traffic?.byDomain && traffic.byDomain.length > 0 && (
             <Card>
               <CardHeader><CardTitle>Traffic by Domain</CardTitle></CardHeader>
@@ -131,7 +131,7 @@ export default function ReportsPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {traffic.byDomain.map((d) => (
+                    {traffic.byDomain.map((d: any) => (
                       <TableRow key={d.domain}>
                         <TableCell className="font-medium">{d.domain}</TableCell>
                         <TableCell className="text-right">{formatNumber(d.incoming)}</TableCell>
@@ -163,7 +163,7 @@ export default function ReportsPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {spamData.topSenders.map((s) => (
+                    {spamData.topSenders.map((s: any) => (
                       <TableRow key={s.sender}>
                         <TableCell className="font-mono text-sm">{s.sender}</TableCell>
                         <TableCell className="text-right">{formatNumber(s.count)}</TableCell>
@@ -189,7 +189,7 @@ export default function ReportsPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {spamData.byDomain.map((d) => (
+                    {spamData.byDomain.map((d: any) => (
                       <TableRow key={d.domain}>
                         <TableCell className="font-medium">{d.domain}</TableCell>
                         <TableCell className="text-right text-red-600">{formatNumber(d.spam)}</TableCell>
@@ -230,10 +230,10 @@ export default function ReportsPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {health.map((h) => (
+                  {health.map((h: any) => (
                     <TableRow key={h.domain}>
                       <TableCell className="font-medium">{h.domain}</TableCell>
-                      {['mxOk', 'spfOk', 'dkimOk', 'dmarcOk'].map((key) => (
+                      {['mxOk', 'spfOk', 'dkimOk', 'dmarcOk'].map((key: any) => (
                         <TableCell key={key} className="text-center">
                           {h[key as keyof typeof h] ? (
                             <CheckCircle className="w-5 h-5 text-green-500 mx-auto" />

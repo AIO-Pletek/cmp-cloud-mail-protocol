@@ -9,8 +9,8 @@ readme_directory = no
 compatibility_level = 3.6
 
 # Hostname and Domain
-myhostname = mail.cmp.local
-mydomain = cmp.local
+myhostname = mail.cbncloud.net
+mydomain = cbncloud.net
 myorigin = $mydomain
 mydestination = localhost
 mynetworks = 127.0.0.0/8 [::ffff:127.0.0.0]/104 [::1]/128

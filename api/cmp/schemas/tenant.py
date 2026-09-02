@@ -22,9 +22,10 @@ class TenantRead(BaseModel):
     custom_domain: str | None
     api_key: str
     is_active: bool
+    is_admin: bool = Field(default=False, alias="isAdmin")
     created_at: datetime
 
-    model_config = {"from_attributes": True}
+    model_config = {"from_attributes": True, "populate_by_name": True}
 
 
 class TenantUpdate(BaseModel):

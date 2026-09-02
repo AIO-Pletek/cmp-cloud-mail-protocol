@@ -52,7 +52,7 @@ export function SpamRatioChart({ data }: { data?: SpamData[] }) {
           </PieChart>
         </ResponsiveContainer>
         <div className="flex justify-center gap-6 mt-2">
-          {chartData.map((item) => (
+          {chartData.map((item: any) => (
             <div key={item.name} className="flex items-center gap-2">
               <div className="w-3 h-3 rounded-full" style={{ backgroundColor: item.color }} />
               <span className="text-sm text-gray-600">{item.name} ({item.value}%)</span>

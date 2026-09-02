@@ -41,7 +41,7 @@ async def get_current_user(
 async def require_admin(
     tenant: Tenant = Depends(get_current_user),
 ) -> Tenant:
-    if tenant.plan != "enterprise":
+    if not tenant.is_admin and tenant.plan != "enterprise":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Admin access requires enterprise plan",

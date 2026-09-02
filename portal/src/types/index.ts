@@ -19,10 +19,10 @@ export interface Domain {
   domainName: string;
   isVerified: boolean;
   dkimSelector: string;
-  dkimPublicKey: string;
-  spfRecord: string;
-  dmarcRecord: string;
-  mxRecord: string;
+  dkimPublicKey: string | null;
+  spfRecord: string | null;
+  dmarcRecord: string | null;
+  mxRecord: string | null;
   isActive: boolean;
   emailCount: number;
   spamBlocked: number;
@@ -90,4 +90,19 @@ export interface User {
   name: string;
   role: string;
   tenantId: string;
+}
+
+export interface SetupCheckResult {
+  domainId: string;
+  domainName: string;
+  step1Dns: boolean;
+  step1Record: { type: string; host: string; value: string };
+  step2Spf: boolean;
+  step2Record: { type: string; host: string; value: string };
+  step3Dkim: boolean;
+  step3Record: { type: string; host: string; value: string };
+  step4Dmarc: boolean;
+  step4Record: { type: string; host: string; value: string };
+  step5Test: boolean;
+  completionPercentage: number;
 }
