@@ -85,6 +85,8 @@ export const cmpApi = {
     setApproval: (id: string, enabled: boolean) => api.put('/policy/domain/' + id + '/approval', { enabled }).then((r) => r.data),
     getAttachmentPassword: (id: string) => api.get('/policy/domain/' + id + '/attachment-password').then((r) => r.data),
     setAttachmentPassword: (id: string, enabled: boolean) => api.put('/policy/domain/' + id + '/attachment-password', { enabled }).then((r) => r.data),
+    getSpamThreshold: (id: string) => api.get('/policy/domain/' + id + '/spam-threshold').then((r) => r.data),
+    setSpamThreshold: (id: string, value: number | null) => api.put('/policy/domain/' + id + '/spam-threshold', { value }).then((r) => r.data),
   },
   filters: {
     list: (domainId?: string) => api.get<FilterRule[]>('/filters', { params: domainId ? { domainId } : {} }).then((r) => r.data),

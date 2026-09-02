@@ -1,12 +1,13 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useParams } from 'next/navigation';
 import { cmpApi } from '@/lib/api';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { CheckCircle, XCircle, Copy, ArrowLeft, Loader2, Key, FileText, Mail } from 'lucide-react';
@@ -81,6 +82,23 @@ export default function DomainDetailPage() {
     },
   });
 
+  const { data: stData, isLoading: stLoading } = useQuery({
+    queryKey: ['domain-spam-threshold', domainId],
+    queryFn: () => cmpApi.domains.getSpamThreshold(domainId),
+    enabled: !!domainId,
+  });
+
+  const stMutation = useMutation({
+    mutationFn: (value: number | null) => cmpApi.domains.setSpamThreshold(domainId, value),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['domain-spam-threshold', domainId] });
+      toast.success('Spam threshold updated');
+    },
+    onError: () => {
+      toast.error('Failed to update spam threshold');
+    },
+  });
+
   const copyToClipboard = (text: string) => {
     navigator.clipboard.writeText(text);
     toast.success('Copied to clipboard');
@@ -117,6 +135,9 @@ export default function DomainDetailPage() {
 
   const approvalEnabled: boolean = approvalData?.approvalRequired ?? false;
   const apRequired: boolean = apData?.attachmentPasswordRequired ?? true;
+  const stValue: number | null = stData?.spamThreshold ?? null;
+  const [stInput, setStInput] = useState('');
+  useEffect(() => { setStInput(stValue === null ? '' : String(stValue)); }, [stValue]);
 
   return (
     <div className="space-y-6">
@@ -228,6 +249,49 @@ export default function DomainDetailPage() {
               className={apRequired ? 'data-[state=checked]:bg-green-500' : ''}
               aria-label="Toggle attachment password requirement"
             />
+          </div>
+
+          <div className="flex items-center justify-between rounded-lg border p-4 mt-4">
+            <div className="space-y-1 flex-1">
+              <p className="text-sm font-medium text-gray-900">Spam Score Threshold</p>
+              <p className="text-xs text-gray-500">
+                Reject emails with spam score at or above this value for this domain. Lower = stricter. Leave empty to use the global default (15).
+              </p>
+              <div className="mt-2">
+                {stValue === null ? (
+                  <Badge variant="outline">Global default (15)</Badge>
+                ) : (
+                  <Badge variant="success">Custom: {stValue}</Badge>
+                )}
+              </div>
+            </div>
+            <div className="flex items-center gap-2 ml-4">
+              <Input
+                type="number"
+                min={1}
+                max={50}
+                step={0.5}
+                placeholder="15"
+                value={stInput}
+                onChange={(e: any) => setStInput(e.target.value)}
+                className="w-24"
+              />
+              <Button
+                size="sm"
+                disabled={stLoading || stMutation.isPending}
+                onClick={() => {
+                  const v = parseFloat(stInput);
+                  stMutation.mutate(stInput.trim() === '' || isNaN(v) ? null : v);
+                }}
+              >
+                {stMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Save'}
+              </Button>
+              {stValue !== null && (
+                <Button size="sm" variant="outline" onClick={() => stMutation.mutate(null)} disabled={stMutation.isPending}>
+                  Reset
+                </Button>
+              )}
+            </div>
           </div>
         </CardContent>
       </Card>

@@ -516,6 +516,44 @@ async def set_domain_approval(domain_id: str, body: ToggleBody, user=Depends(get
 
 
 # ---------------------------------------------------------------------------
+# Per-domain spam threshold (enforced by rspamd settings module)
+# GET  /api/v1/policy/domain/{domain_id}/spam-threshold
+# PUT  /api/v1/policy/domain/{domain_id}/spam-threshold   {value: float|null}
+# ---------------------------------------------------------------------------
+from cmp.policy.domain_policy_store import (
+    get_domain_spam_threshold as _get_domain_spam_thr,
+    set_domain_spam_threshold as _set_domain_spam_thr,
+)
+from cmp.services.rspamd_settings import sync_rspamd_settings
+
+
+class SpamThresholdBody(BaseModel):
+    value: Optional[float] = None  # reject score; None = reset to global default
+
+
+@router.get("/domain/{domain_id}/spam-threshold")
+async def get_domain_spam_threshold_route(domain_id: str, user=Depends(get_current_user)):
+    result = await _get_domain_spam_thr(domain_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Domain not found")
+    return result
+
+
+@router.put("/domain/{domain_id}/spam-threshold")
+async def set_domain_spam_threshold_route(domain_id: str, body: SpamThresholdBody, user=Depends(get_current_user)):
+    if body.value is not None and not (1.0 <= body.value <= 50.0):
+        raise HTTPException(status_code=400, detail="Threshold must be between 1.0 and 50.0")
+    result = await _set_domain_spam_thr(domain_id, body.value)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Domain not found")
+    try:
+        await sync_rspamd_settings()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Saved but rspamd sync failed: {e}")
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Per-domain attachment password toggle (enforced by rspamd lua)
 # GET  /api/v1/policy/domain/{domain_id}/attachment-password
 # PUT  /api/v1/policy/domain/{domain_id}/attachment-password

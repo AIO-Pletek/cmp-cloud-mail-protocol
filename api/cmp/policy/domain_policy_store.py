@@ -66,6 +66,7 @@ CREATE INDEX IF NOT EXISTS idx_policy_domain_rules_lookup ON policy_domain_rules
 MIGRATE_SQL = """
 ALTER TABLE domains ADD COLUMN IF NOT EXISTS approval_required BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE domains ADD COLUMN IF NOT EXISTS attachment_password_required BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE domains ADD COLUMN IF NOT EXISTS spam_threshold REAL;
 """
 
 
@@ -300,6 +301,42 @@ async def get_domain_attachment_password_required(domain_id: str) -> dict:
             return None
         return {"domain_id": str(row["id"]), "domain_name": row["domain_name"],
                 "attachment_password_required": bool(row["attachment_password_required"])}
+    finally:
+        await conn.close()
+
+
+async def get_domain_spam_threshold(domain_id: str) -> dict:
+    """Get the per-domain rspamd reject threshold (None = global default)."""
+    await init_domain_policy_tables()
+    conn = await _conn()
+    try:
+        row = await conn.fetchrow(
+            "SELECT id, domain_name, spam_threshold FROM domains WHERE id=$1 AND is_active=TRUE",
+            domain_id
+        )
+        if not row:
+            return None
+        return {"domain_id": str(row["id"]), "domain_name": row["domain_name"],
+                "spam_threshold": float(row["spam_threshold"]) if row["spam_threshold"] is not None else None}
+    finally:
+        await conn.close()
+
+
+async def set_domain_spam_threshold(domain_id: str, value) -> dict:
+    """Set or clear (None) the per-domain rspamd reject threshold."""
+    await init_domain_policy_tables()
+    conn = await _conn()
+    try:
+        row = await conn.fetchrow(
+            """UPDATE domains SET spam_threshold=$1, updated_at=NOW()
+               WHERE id=$2 AND is_active=TRUE
+               RETURNING id, domain_name, spam_threshold""",
+            value, domain_id
+        )
+        if not row:
+            return None
+        return {"domain_id": str(row["id"]), "domain_name": row["domain_name"],
+                "spam_threshold": float(row["spam_threshold"]) if row["spam_threshold"] is not None else None}
     finally:
         await conn.close()
 
