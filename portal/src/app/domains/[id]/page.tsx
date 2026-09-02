@@ -99,6 +99,11 @@ export default function DomainDetailPage() {
     },
   });
 
+  // Spam threshold input state — hooks must stay above the early returns below
+  const [stInput, setStInput] = useState('');
+  const stValueForEffect: number | null = stData?.spamThreshold ?? null;
+  useEffect(() => { setStInput(stValueForEffect === null ? '' : String(stValueForEffect)); }, [stValueForEffect]);
+
   const copyToClipboard = (text: string) => {
     navigator.clipboard.writeText(text);
     toast.success('Copied to clipboard');
@@ -136,8 +141,6 @@ export default function DomainDetailPage() {
   const approvalEnabled: boolean = approvalData?.approvalRequired ?? false;
   const apRequired: boolean = apData?.attachmentPasswordRequired ?? true;
   const stValue: number | null = stData?.spamThreshold ?? null;
-  const [stInput, setStInput] = useState('');
-  useEffect(() => { setStInput(stValue === null ? '' : String(stValue)); }, [stValue]);
 
   return (
     <div className="space-y-6">
