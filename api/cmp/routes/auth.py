@@ -2,22 +2,15 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from cmp.database import get_db
-from cmp.schemas.auth import LoginRequest, TokenPair, RegisterRequest, PasswordChange
+from cmp.schemas.auth import LoginRequest, TokenPair, PasswordChange
 from cmp.schemas.tenant import TenantRead
-from cmp.services.auth_service import register_tenant, authenticate_tenant, create_token_pair, refresh_access_token
+from cmp.services.auth_service import authenticate_tenant, create_token_pair, refresh_access_token
 from cmp.middleware.auth import get_current_user
 from cmp.middleware.audit import log_audit
 from cmp.utils.crypto import verify_password, hash_password
 from cmp.models.tenant import Tenant
 
 router = APIRouter(prefix="/api/v1/auth", tags=["Authentication"])
-
-
-@router.post("/register", response_model=TenantRead, status_code=status.HTTP_201_CREATED)
-async def register(req: RegisterRequest, request: Request, db: AsyncSession = Depends(get_db)):
-    tenant = await register_tenant(db, req)
-    await log_audit(db, tenant.id, tenant.email, "register", "tenant", tenant.id, ip_address=request.client.host if request.client else None)
-    return TenantRead.model_validate(tenant, from_attributes=True).model_dump(by_alias=True)
 
 
 @router.post("/login")

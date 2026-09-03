@@ -1,4 +1,4 @@
-import { Bell, ChevronRight, LogOut, Settings, User, ArrowLeft, Home } from 'lucide-react';
+import { Bell, ChevronRight, LogOut, Settings, User, Home } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 import { usePathname } from 'next/navigation';
 import Link from 'next/link';
@@ -19,12 +19,10 @@ const pageTitles: Record<string, string> = {
   '/email-history': 'Email History',
   '/settings': 'Settings',
   '/settings/branding': 'Branding',
-  '/admin': 'Admin Dashboard',
-  '/admin/tenants': 'Tenant Management',
 };
 
 export function Header() {
-  const { user, logout, isImpersonating, impersonatedBy, returnToAdmin } = useAuth();
+  const { user, logout } = useAuth();
   const pathname = usePathname();
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -46,9 +44,6 @@ export function Header() {
 
   return (
     <header className="h-16 border-b border-gray-200 bg-white flex items-center justify-between px-6 sticky top-0 z-30">
-      {isImpersonating && (
-        <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-yellow-400 via-orange-400 to-red-400"></div>
-      )}
       {/* Left: Back button + Breadcrumb */}
       <div className="flex items-center gap-3">
         {/* Back button - visible on sub-pages */}
@@ -81,13 +76,8 @@ export function Header() {
         </div>
       </div>
 
-      {/* Right: Back to Admin + Notifications + User */}
+      {/* Right: Notifications + User */}
       <div className="flex items-center gap-4">
-        {isImpersonating && (
-          <button onClick={returnToAdmin} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-yellow-500 hover:bg-yellow-600 rounded-lg transition-colors shadow-sm">
-            <ArrowLeft className="w-4 h-4" /> Back to Admin
-          </button>
-        )}
         <button className="relative p-2 rounded-lg hover:bg-gray-100 transition-colors">
           <Bell className="w-5 h-5 text-gray-500" />
         </button>

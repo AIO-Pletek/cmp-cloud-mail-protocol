@@ -69,7 +69,6 @@ export interface TrafficStats { period: string; totalIncoming: number; totalOutg
 export const cmpApi = {
   auth: {
     login: (email: string, password: string) => api.post<AuthResponse>('/auth/login', { email, password }).then((r) => r.data),
-    register: (data: any) => api.post<AuthResponse>('/auth/register', data).then((r) => r.data),
     refresh: (refreshToken: string) => api.post<{ accessToken: string; refreshToken: string }>('/auth/refresh', { refreshToken }).then((r) => r.data),
     me: () => api.get<User>('/auth/me').then((r) => r.data),
   },
@@ -109,11 +108,6 @@ export const cmpApi = {
     topSenders: (params?: any) => api.get('/reports/top-senders', { params }).then((r) => r.data),
     domainHealth: () => api.get<DomainHealth[]>('/reports/domain-health').then((r) => r.data),
     export: (params?: any) => api.get('/reports/export', { params, responseType: 'blob' }).then((r) => r.data),
-  },
-  tenants: {
-    list: () => api.get('/admin/tenants').then((r) => r.data),
-    update: (id: string, data: any) => api.put(`/admin/tenants/${id}`, data).then((r) => r.data),
-    branding: (id: string, data: FormData) => api.put(`/admin/tenants/${id}/branding`, data, { headers: { 'Content-Type': 'multipart/form-data' } }).then((r) => r.data),
   },
   queue: {
     list: () => api.get('/queue').then((r) => r.data),

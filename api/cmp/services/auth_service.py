@@ -42,6 +42,9 @@ async def authenticate_tenant(db: AsyncSession, email: str, password: str) -> Te
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password")
     if not tenant.is_active:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Account is disabled")
+    if not getattr(tenant, "is_admin", False):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                            detail="Single-tenant mode: only the admin account can sign in")
     return tenant
 
 
@@ -77,6 +80,6 @@ async def refresh_access_token(db: AsyncSession, refresh_token: str) -> TokenPai
 
     result = await db.execute(select(Tenant).where(Tenant.id == tenant_id))
     tenant = result.scalar_one_or_none()
-    if tenant is None or not tenant.is_active:
+    if tenant is None or not tenant.is_active or not getattr(tenant, "is_admin", False):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Tenant not found or inactive")
     return create_token_pair(tenant)

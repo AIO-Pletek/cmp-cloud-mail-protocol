@@ -33,7 +33,7 @@ async def get_current_user(
 
     result = await db.execute(select(Tenant).where(Tenant.id == tenant_id))
     tenant = result.scalar_one_or_none()
-    if tenant is None or not tenant.is_active:
+    if tenant is None or not tenant.is_active or not getattr(tenant, "is_admin", False):
         raise credentials_exception
     return tenant
 

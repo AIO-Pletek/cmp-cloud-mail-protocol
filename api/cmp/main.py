@@ -3,7 +3,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from cmp.database import engine, Base
 from cmp.models import Tenant, Domain, FilterRule, Quarantine, AuditLog
-from cmp.routes import auth, tenants, domains, policy_engine as policy_engine_routes, attachment_policy, enterprise, filters, quarantine, reports, queue, relay, trusted_hosts, gateway, smtp_auth, email_logs, access_lists, audit, webhooks, alerts, scheduled_reports
+from cmp.routes import auth, domains, policy_engine as policy_engine_routes, attachment_policy, enterprise, filters, quarantine, reports, queue, relay, trusted_hosts, gateway, smtp_auth, email_logs, access_lists, audit, webhooks, alerts, scheduled_reports
 
 
 @asynccontextmanager
@@ -30,7 +30,6 @@ app.add_middleware(
 )
 
 app.include_router(auth.router)
-app.include_router(tenants.router)
 app.include_router(domains.router)
 app.include_router(filters.router)
 app.include_router(quarantine.router)
