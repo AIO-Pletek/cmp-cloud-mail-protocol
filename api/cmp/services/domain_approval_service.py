@@ -429,7 +429,20 @@ async def create_and_notify(
             )
         return existing
 
-    notify_emails = await get_notification_emails(tenant_id)
+    # Per-domain approvers take precedence over the tenant notification list.
+    # INBOUND -> recipient domain is the managed one; OUTBOUND -> sender domain.
+    managed_domain = None
+    if direction == "INBOUND" and recipient and "@" in recipient:
+        managed_domain = recipient.split("@")[-1].lower()
+    elif sender_domain:
+        managed_domain = sender_domain.lower()
+
+    notify_emails = []
+    if managed_domain:
+        from cmp.policy.domain_policy_store import get_domain_approvers_by_name
+        notify_emails = await get_domain_approvers_by_name(managed_domain)
+    if not notify_emails:
+        notify_emails = await get_notification_emails(tenant_id)
     if not notify_emails:
         return None
 

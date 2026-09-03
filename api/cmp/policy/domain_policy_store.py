@@ -67,6 +67,7 @@ MIGRATE_SQL = """
 ALTER TABLE domains ADD COLUMN IF NOT EXISTS approval_required BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE domains ADD COLUMN IF NOT EXISTS attachment_password_required BOOLEAN NOT NULL DEFAULT TRUE;
 ALTER TABLE domains ADD COLUMN IF NOT EXISTS spam_threshold REAL;
+ALTER TABLE domains ADD COLUMN IF NOT EXISTS approver_emails TEXT;
 """
 
 
@@ -337,6 +338,59 @@ async def set_domain_spam_threshold(domain_id: str, value) -> dict:
             return None
         return {"domain_id": str(row["id"]), "domain_name": row["domain_name"],
                 "spam_threshold": float(row["spam_threshold"]) if row["spam_threshold"] is not None else None}
+    finally:
+        await conn.close()
+
+
+async def get_domain_approvers(domain_id: str) -> dict:
+    """Get per-domain approver emails (None = fallback to tenant notification list)."""
+    await init_domain_policy_tables()
+    conn = await _conn()
+    try:
+        row = await conn.fetchrow(
+            "SELECT id, domain_name, approver_emails FROM domains WHERE id=$1 AND is_active=TRUE",
+            domain_id
+        )
+        if not row:
+            return None
+        return {"domain_id": str(row["id"]), "domain_name": row["domain_name"],
+                "approver_emails": row["approver_emails"] or None}
+    finally:
+        await conn.close()
+
+
+async def set_domain_approvers(domain_id: str, emails) -> dict:
+    """Set or clear (None) per-domain approver emails (stored comma-separated)."""
+    await init_domain_policy_tables()
+    conn = await _conn()
+    try:
+        row = await conn.fetchrow(
+            """UPDATE domains SET approver_emails=$1, updated_at=NOW()
+               WHERE id=$2 AND is_active=TRUE
+               RETURNING id, domain_name, approver_emails""",
+            emails, domain_id
+        )
+        if not row:
+            return None
+        return {"domain_id": str(row["id"]), "domain_name": row["domain_name"],
+                "approver_emails": row["approver_emails"] or None}
+    finally:
+        await conn.close()
+
+
+async def get_domain_approvers_by_name(domain_name: str) -> list:
+    """Approver email list for a managed domain name; [] if unset."""
+    await init_domain_policy_tables()
+    conn = await _conn()
+    try:
+        row = await conn.fetchrow(
+            "SELECT approver_emails FROM domains WHERE domain_name=$1 AND is_active=TRUE",
+            domain_name.lower()
+        )
+        if not row or not row["approver_emails"]:
+            return []
+        raw = row["approver_emails"].replace(";", ",").replace("\n", ",")
+        return [e.strip().lower() for e in raw.split(",") if e.strip()]
     finally:
         await conn.close()
 

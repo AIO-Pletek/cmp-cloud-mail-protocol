@@ -99,6 +99,28 @@ export default function DomainDetailPage() {
     },
   });
 
+  const { data: avData, isLoading: avLoading } = useQuery({
+    queryKey: ['domain-approvers', domainId],
+    queryFn: () => cmpApi.domains.getApprovers(domainId),
+    enabled: !!domainId,
+  });
+
+  const avMutation = useMutation({
+    mutationFn: (emails: string | null) => cmpApi.domains.setApprovers(domainId, emails),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['domain-approvers', domainId] });
+      toast.success('Approver emails updated');
+    },
+    onError: (err: any) => {
+      toast.error(err?.response?.data?.detail || 'Failed to update approver emails');
+    },
+  });
+
+  // Approver emails input state — hooks must stay above the early returns below
+  const [avInput, setAvInput] = useState('');
+  const avValueForEffect: string = avData?.approverEmails ?? '';
+  useEffect(() => { setAvInput(avValueForEffect); }, [avValueForEffect]);
+
   // Spam threshold input state — hooks must stay above the early returns below
   const [stInput, setStInput] = useState('');
   const stValueForEffect: number | null = stData?.spamThreshold ?? null;
@@ -291,6 +313,43 @@ export default function DomainDetailPage() {
               </Button>
               {stValue !== null && (
                 <Button size="sm" variant="outline" onClick={() => stMutation.mutate(null)} disabled={stMutation.isPending}>
+                  Reset
+                </Button>
+              )}
+            </div>
+          </div>
+
+          <div className="rounded-lg border p-4 mt-4">
+            <div className="space-y-1">
+              <p className="text-sm font-medium text-gray-900">Approver Emails</p>
+              <p className="text-xs text-gray-500">
+                Email addresses that receive domain approval requests (approve/reject links). Only @{domain.domainName || 'this-domain'} addresses are allowed. Separate multiple addresses with commas. Leave empty to use the tenant notification list.
+              </p>
+              <div className="mt-2">
+                {avValueForEffect === '' ? (
+                  <Badge variant="outline">Tenant notification list</Badge>
+                ) : (
+                  <Badge variant="success">{avValueForEffect.split(',').length} approver(s)</Badge>
+                )}
+              </div>
+            </div>
+            <div className="flex items-center gap-2 mt-3">
+              <Input
+                type="text"
+                placeholder={`admin@${domain.domainName}, it@${domain.domainName}`}
+                value={avInput}
+                onChange={(e: any) => setAvInput(e.target.value)}
+                className="flex-1"
+              />
+              <Button
+                size="sm"
+                disabled={avLoading || avMutation.isPending}
+                onClick={() => avMutation.mutate(avInput.trim() === '' ? null : avInput.trim())}
+              >
+                {avMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Save'}
+              </Button>
+              {avValueForEffect !== '' && (
+                <Button size="sm" variant="outline" onClick={() => avMutation.mutate(null)} disabled={avMutation.isPending}>
                   Reset
                 </Button>
               )}

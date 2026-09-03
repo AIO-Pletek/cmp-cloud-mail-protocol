@@ -554,6 +554,55 @@ async def set_domain_spam_threshold_route(domain_id: str, body: SpamThresholdBod
 
 
 # ---------------------------------------------------------------------------
+# Per-domain approver emails for domain-approval notifications
+# GET  /api/v1/policy/domain/{domain_id}/approvers
+# PUT  /api/v1/policy/domain/{domain_id}/approvers   {emails: "a@dom, b@dom" | null}
+# Only addresses @the-domain-itself are accepted.
+# ---------------------------------------------------------------------------
+from cmp.policy.domain_policy_store import (
+    get_domain_approvers as _get_domain_approvers,
+    set_domain_approvers as _set_domain_approvers,
+)
+
+
+class ApproversBody(BaseModel):
+    emails: Optional[str] = None  # comma/semicolon/newline separated; None/empty = clear
+
+
+@router.get("/domain/{domain_id}/approvers")
+async def get_domain_approvers_route(domain_id: str, user=Depends(get_current_user)):
+    result = await _get_domain_approvers(domain_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Domain not found")
+    return result
+
+
+@router.put("/domain/{domain_id}/approvers")
+async def set_domain_approvers_route(domain_id: str, body: ApproversBody, user=Depends(get_current_user)):
+    current = await _get_domain_approvers(domain_id)
+    if current is None:
+        raise HTTPException(status_code=404, detail="Domain not found")
+    domain_name = current["domain_name"].lower()
+
+    raw = (body.emails or "").replace(";", ",").replace("\n", ",")
+    emails = []
+    for e in raw.split(","):
+        e = e.strip().lower()
+        if not e:
+            continue
+        if "@" not in e or e.count("@") != 1:
+            raise HTTPException(status_code=400, detail=f"Invalid email: {e}")
+        if not e.endswith("@" + domain_name):
+            raise HTTPException(status_code=400,
+                                detail=f"Approver {e} rejected: must be an @{domain_name} address")
+        if e not in emails:
+            emails.append(e)
+
+    result = await _set_domain_approvers(domain_id, ",".join(emails) if emails else None)
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Per-domain attachment password toggle (enforced by rspamd lua)
 # GET  /api/v1/policy/domain/{domain_id}/attachment-password
 # PUT  /api/v1/policy/domain/{domain_id}/attachment-password
