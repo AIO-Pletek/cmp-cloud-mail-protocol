@@ -434,6 +434,8 @@ async def create_and_notify(
     managed_domain = None
     if direction == "INBOUND" and recipient and "@" in recipient:
         managed_domain = recipient.split("@")[-1].lower()
+    elif direction == "OUTBOUND" and sender and "@" in sender:
+        managed_domain = sender.split("@")[-1].lower()
     elif sender_domain:
         managed_domain = sender_domain.lower()
 
