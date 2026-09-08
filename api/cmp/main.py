@@ -1,5 +1,28 @@
 from contextlib import asynccontextmanager
+from pathlib import Path
 from fastapi import FastAPI
+
+
+def _git_sha() -> str:
+    # ponytail: reads .git directly; switch to a build-time env var if deploys stop keeping .git on the server
+    try:
+        gitdir = Path(__file__).resolve().parents[2] / ".git"
+        head = (gitdir / "HEAD").read_text().strip()
+        if head.startswith("ref:"):
+            ref = head.split(" ", 1)[1]
+            p = gitdir / ref
+            if p.exists():
+                return p.read_text().strip()[:7]
+            for line in (gitdir / "packed-refs").read_text().splitlines():
+                if line.endswith(ref):
+                    return line.split(" ", 1)[0][:7]
+            return "unknown"
+        return head[:7]
+    except Exception:
+        return "unknown"
+
+
+GIT_SHA = _git_sha()
 from fastapi.middleware.cors import CORSMiddleware
 from cmp.database import engine, Base
 from cmp.models import Tenant, Domain, FilterRule, Quarantine, AuditLog
@@ -52,4 +75,4 @@ app.include_router(policy_engine_routes.router)
 
 @app.get("/health", tags=["Health"])
 async def health_check():
-    return {"status": "healthy", "service": "CMP", "version": "1.0.0"}
+    return {"status": "healthy", "service": "CMP", "version": "1.0.0", "git": GIT_SHA}

@@ -23,7 +23,7 @@ async def login(req: LoginRequest, request: Request, db: AsyncSession = Depends(
         "accessToken": tokens.accessToken,
         "refreshToken": tokens.refreshToken,
         "tokenType": tokens.token_type,
-        "user": tenant_data.model_dump(by_alias=True)
+        "user": tenant_data.model_dump(by_alias=True, exclude={"api_key"})
     }
 
 
