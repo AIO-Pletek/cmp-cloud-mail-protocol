@@ -72,7 +72,7 @@ content_filter = smtp:[127.0.0.1]:10025
 # Milter Configuration (Rspamd + OpenDKIM via Rspamd)
 smtpd_milters = inet:127.0.0.1:11332
 non_smtpd_milters = inet:127.0.0.1:11332
-milter_default_action = accept
+milter_default_action = tempfail
 milter_connect_macros = j {daemon_name} v {if_name} _
 milter_mail_macros = i {mail_addr} {client_addr} {client_name} {auth_authen} {auth_type}
 milter_content_timeout = 300s
