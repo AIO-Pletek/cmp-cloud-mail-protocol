@@ -1,16 +1,22 @@
 """Enterprise features routes - DLP, DKIM rotation, archiving, compliance."""
 import json, os, subprocess, uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Optional
 from cmp.middleware.auth import get_current_user, require_admin
+from cmp.database import get_db
+from cmp.models.domain import Domain
+from cmp.config import settings
+from cmp.services import dkim_service
 
 router = APIRouter(prefix="/api/v1/enterprise", tags=["Enterprise"])
 
 DLP_FILE = "/etc/cmp/dlp_rules.json"
 ARCHIVE_FILE = "/etc/cmp/archiving_config.json"
-DKIM_DIR = "/etc/opendkim/keys"
+LEGACY_DKIM_DIR = "/etc/opendkim/keys"
 
 def _load_json(path, default=None):
     if os.path.exists(path):
@@ -93,37 +99,111 @@ async def sync_dlp(tenant=Depends(require_admin)):
     return {"synced": len(rules), "file": "/etc/rspamd/local.d/dlp_regexp.lua"}
 
 
+async def _dkim_source_domains(tenant, db: AsyncSession) -> list[Domain]:
+    """DB domains the current user may manage (admin: all active; tenant: own)."""
+    q = select(Domain).where(Domain.is_active == True)
+    if not tenant.is_admin:
+        q = q.where(Domain.tenant_id == tenant.id)
+    return list((await db.execute(q)).scalars().all())
+
+
 @router.get("/dkim-rotation")
-async def dkim_info(tenant=Depends(get_current_user)):
+async def dkim_info(tenant=Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    selector = settings.DKIM_SELECTOR
     domains = []
-    if os.path.exists(DKIM_DIR):
-        for entry in os.scandir(DKIM_DIR):
-            if entry.is_dir():
-                key_file = os.path.join(entry.path, f"{entry.name}.private")
-                txt_file = os.path.join(entry.path, f"{entry.name}.txt")
-                info = {"domain": entry.name, "key_exists": os.path.exists(key_file)}
-                if os.path.exists(txt_file):
-                    with open(txt_file) as f: info["dns_record"] = f.read().strip()
-                domains.append(info)
-    return {"domains": domains, "rotation_interval_days": 90}
+    seen = set()
+
+    # Source of truth: registered domains (DB).  "key_exists" reflects the
+    # rspamd signing path, not the legacy opendkim folder.
+    for d in await _dkim_source_domains(tenant, db):
+        key_path = dkim_service.signing_key_path(d.domain_name, selector)
+        info = {
+            "domain": d.domain_name,
+            "selector": selector,
+            "dns_host": f"{selector}._domainkey.{d.domain_name}",
+            "key_exists": os.path.exists(key_path),
+            "key_path": key_path,
+            "verified": bool(d.is_verified),
+            "active": bool(d.is_active),
+            "source": "db",
+        }
+        if d.dkim_public_key:
+            info["dns_record"] = dkim_service.dns_record_from_pem(d.dkim_public_key)
+        else:
+            pub = dkim_service.get_public_key_path(d.domain_name, selector)
+            if os.path.exists(pub):
+                with open(pub) as _f:
+                    info["dns_record"] = dkim_service.dns_record_from_pem(_f.read())
+        domains.append(info)
+        seen.add(d.domain_name)
+
+    # Legacy opendkim keys not tracked in the DB stay visible so nothing
+    # disappears from the UI; they are flagged as unmanaged.
+    if os.path.isdir(LEGACY_DKIM_DIR):
+        for entry in os.scandir(LEGACY_DKIM_DIR):
+            if not entry.is_dir() or entry.name in seen:
+                continue
+            txt = None
+            for fname in os.listdir(entry.path):
+                if fname.endswith(".txt"):
+                    with open(os.path.join(entry.path, fname)) as f:
+                        txt = f.read().strip()
+                    break
+            info = {
+                "domain": entry.name,
+                "selector": selector,
+                "dns_host": f"{selector}._domainkey.{entry.name}",
+                "key_exists": os.path.exists(dkim_service.signing_key_path(entry.name, selector)),
+                "key_path": dkim_service.signing_key_path(entry.name, selector),
+                "verified": None,
+                "active": True,
+                "source": "legacy",
+            }
+            if txt:
+                info["dns_record"] = txt
+            domains.append(info)
+
+    return {
+        "domains": domains,
+        "rotation_interval_days": 90,
+        "signer": "rspamd",
+        "key_dir": settings.RSPAMD_DKIM_DIR,
+        "selector": selector,
+    }
+
+
+@router.post("/dkim-rotation/sync")
+async def sync_dkim_keys(tenant=Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    """Backfill: ensure every registered domain has a live rspamd signing key."""
+    selector = settings.DKIM_SELECTOR
+    results = []
+    for d in await _dkim_source_domains(tenant, db):
+        status = await dkim_service.ensure_signing_key(d.domain_name, selector)
+        results.append({"domain": d.domain_name, "status": status})
+    return {"synced": results}
 
 
 @router.post("/dkim-rotation/{domain}")
-async def rotate_dkim(domain: str, tenant=Depends(require_admin)):
-    domain_dir = os.path.join(DKIM_DIR, domain)
-    os.makedirs(domain_dir, exist_ok=True)
-    selector = f"cmp{datetime.now().strftime('%Y%m')}"
-    result = subprocess.run(
-        ["opendkim-genkey", "-D", domain_dir, "-d", domain, "-s", selector],
-        capture_output=True, text=True
-    )
-    if result.returncode != 0:
-        raise HTTPException(status_code=500, detail=f"DKIM generation failed: {result.stderr}")
-    txt_path = os.path.join(domain_dir, f"{selector}.txt")
-    dns_record = ""
-    if os.path.exists(txt_path):
-        with open(txt_path) as f: dns_record = f.read().strip()
-    return {"domain": domain, "selector": selector, "dns_record": dns_record, "action": "Add this TXT record to DNS"}
+async def rotate_dkim(domain: str, tenant=Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    d = (await db.execute(select(Domain).where(Domain.domain_name == domain))).scalar_one_or_none()
+    if d is None:
+        raise HTTPException(status_code=404, detail=f"Domain '{domain}' is not registered on this gateway")
+
+    selector, public_key = await dkim_service.rotate_key(domain, settings.DKIM_SELECTOR)
+
+    d.dkim_public_key = public_key
+    d.dkim_selector = selector
+    d.updated_at = datetime.now(timezone.utc)
+    await db.flush()
+
+    return {
+        "domain": domain,
+        "selector": selector,
+        "dns_host": f"{selector}._domainkey.{domain}",
+        "dns_record": dkim_service.dns_record_from_pem(public_key),
+        "action": "Update the existing TXT record (host stays the same) - old key archived on the server",
+        "rotated_at": datetime.now(timezone.utc).isoformat(),
+    }
 
 
 @router.get("/archiving")

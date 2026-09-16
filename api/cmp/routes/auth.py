@@ -8,6 +8,7 @@ from cmp.services.auth_service import register_tenant, authenticate_tenant, crea
 from cmp.middleware.auth import get_current_user
 from cmp.middleware.audit import log_audit
 from cmp.utils.crypto import verify_password, hash_password
+from cmp.utils import ratelimit
 from cmp.models.tenant import Tenant
 
 router = APIRouter(prefix="/api/v1/auth", tags=["Authentication"])
@@ -22,8 +23,26 @@ async def register(req: RegisterRequest, request: Request, db: AsyncSession = De
 
 @router.post("/login")
 async def login(req: LoginRequest, request: Request, db: AsyncSession = Depends(get_db)):
-    tenant = await authenticate_tenant(db, req.email, req.password)
-    await log_audit(db, tenant.id, tenant.email, "login", "tenant", tenant.id, ip_address=request.client.host if request.client else None)
+    client_ip = request.client.host if request.client else "unknown"
+
+    # Rate limit / lockout (CWE-307): 429 with Retry-After when throttled
+    allowed, retry_after = await ratelimit.check_login_allowed(client_ip, req.email)
+    if not allowed:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many failed login attempts. Please retry later.",
+            headers={"Retry-After": str(max(retry_after, 1))},
+        )
+
+    try:
+        tenant = await authenticate_tenant(db, req.email, req.password)
+    except HTTPException:
+        # Only count genuinely failed credential checks, never successes
+        await ratelimit.record_login_failure(client_ip, req.email)
+        raise
+
+    await ratelimit.reset_login_failures(client_ip, req.email)
+    await log_audit(db, tenant.id, tenant.email, "login", "tenant", tenant.id, ip_address=client_ip)
     tokens = create_token_pair(tenant)
     tenant_data = TenantRead.model_validate(tenant)
     return {

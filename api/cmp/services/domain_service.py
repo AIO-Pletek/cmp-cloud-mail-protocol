@@ -7,6 +7,7 @@ from cmp.models.tenant import Tenant
 from cmp.utils.crypto import generate_verification_token
 from cmp.utils.dns import check_mx_record, check_spf_record, check_dkim_record, check_dmarc_record
 from cmp.utils.dns import generate_dkim_key_pair
+from cmp.services.dkim_service import ensure_signing_key
 from cmp.config import settings
 
 # Known MX targets that indicate this gateway is handling mail for the domain
@@ -41,11 +42,14 @@ async def add_domain(db: AsyncSession, tenant: Tenant, domain_name: str) -> Doma
     verification_token = generate_verification_token()
     try:
         private_key, public_key = await generate_dkim_key_pair(domain_name, "cmp", settings.DKIM_KEY_DIR)
+        # Publish into the rspamd signing path so outbound mail for this
+        # domain is DKIM-signed from day one (no manual add-domain.sh step).
+        await ensure_signing_key(domain_name, "cmp")
     except Exception:
         public_key = None
     domain = Domain(
         tenant_id=tenant.id, domain_name=domain_name, verification_token=verification_token,
-        dkim_public_key=public_key,
+        dkim_public_key=public_key, dkim_selector="cmp",
         spf_record=f"v=spf1 ip4:103.24.12.21 ~all",
         dmarc_record=f"v=DMARC1; p=quarantine; rua=mailto:dmarc@{domain_name}",
     )
