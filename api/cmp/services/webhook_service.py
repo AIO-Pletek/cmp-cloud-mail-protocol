@@ -17,6 +17,8 @@ from typing import Optional
 
 import httpx
 
+from cmp.utils import netguard
+
 logger = logging.getLogger("cmp.webhook_service")
 
 WEBHOOKS_FILE = "/etc/cmp/webhooks.json"
@@ -73,7 +75,7 @@ def get_webhook(webhook_id: str) -> Optional[dict]:
     return _load_webhooks().get(webhook_id)
 
 
-def create_webhook(
+async def create_webhook(
     tenant_id: str,
     url: str,
     events: list[str],
@@ -84,6 +86,9 @@ def create_webhook(
     invalid = [e for e in events if e not in VALID_EVENTS]
     if invalid:
         raise ValueError(f"Invalid events: {invalid}. Valid: {VALID_EVENTS}")
+
+    # Reject non-public / SSRF targets up front (CWE-918)
+    await netguard.validate_webhook_url(url)
 
     webhook_id = str(uuid.uuid4())
     if not secret:
@@ -106,7 +111,7 @@ def create_webhook(
     return webhook
 
 
-def update_webhook(webhook_id: str, **fields) -> Optional[dict]:
+async def update_webhook(webhook_id: str, **fields) -> Optional[dict]:
     webhooks = _load_webhooks()
     webhook = webhooks.get(webhook_id)
     if not webhook:
@@ -116,6 +121,8 @@ def update_webhook(webhook_id: str, **fields) -> Optional[dict]:
         invalid = [e for e in fields["events"] if e not in VALID_EVENTS]
         if invalid:
             raise ValueError(f"Invalid events: {invalid}. Valid: {VALID_EVENTS}")
+    if "url" in fields and fields["url"]:
+        await netguard.validate_webhook_url(fields["url"])
 
     allowed = {"url", "events", "secret", "enabled"}
     for key, value in fields.items():
@@ -156,12 +163,13 @@ def generate_signature(payload: bytes, secret: str) -> str:
 # Event dispatch
 # ---------------------------------------------------------------------------
 
-async def dispatch_event(event: str, data: dict) -> list[dict]:
+async def dispatch_event(event: str, data: dict, only_webhook_id: Optional[str] = None) -> list[dict]:
     """Send webhook notifications for an event to all matching, enabled webhooks.
 
     Args:
         event: Event name (e.g. "email.sent").
         data: Event-specific payload (sender, recipient, domain, status, score, ...).
+        only_webhook_id: When set, deliver only to this webhook (used by /test).
 
     Returns:
         List of delivery results: {webhook_id, url, status_code, success, error}.
@@ -174,6 +182,7 @@ async def dispatch_event(event: str, data: dict) -> list[dict]:
     targets = [
         w for w in webhooks.values()
         if w.get("enabled") and event in w.get("events", [])
+        and (only_webhook_id is None or w.get("id") == only_webhook_id)
     ]
 
     if not targets:
@@ -188,7 +197,8 @@ async def dispatch_event(event: str, data: dict) -> list[dict]:
     payload_bytes = json.dumps(payload_base, default=str).encode("utf-8")
 
     results = []
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    # follow_redirects=False blocks redirect-based SSRF bypass
+    async with httpx.AsyncClient(timeout=10.0, follow_redirects=False) as client:
         tasks = [
             _deliver(client, wh, payload_bytes, payload_base)
             for wh in targets
@@ -208,10 +218,26 @@ async def _deliver(
     webhook_id = webhook["id"]
     url = webhook["url"]
     secret = webhook.get("secret", "")
+
+    # Defense in depth: re-validate right before the request so a stale row
+    # (or DNS change) can never reach an internal target.
+    try:
+        await netguard.validate_webhook_url(url)
+    except ValueError as exc:
+        logger.warning("Webhook %s blocked by egress guard: %s", webhook_id, exc)
+        return {
+            "webhook_id": webhook_id,
+            "url": url,
+            "status_code": None,
+            "success": False,
+            "error": f"blocked: {exc}",
+        }
+
     signature = generate_signature(payload_bytes, secret)
 
     headers = {
         "Content-Type": "application/json",
+        "User-Agent": "CMP-Webhook/1.0",
         "X-CMP-Event": payload_dict["event"],
         "X-CMP-Signature": f"sha256={signature}",
         "X-CMP-Delivery": str(uuid.uuid4()),

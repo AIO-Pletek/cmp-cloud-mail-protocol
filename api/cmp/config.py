@@ -13,6 +13,8 @@ class Settings(BaseSettings):
     POSTFIX_MAIN_CF: str = "/etc/postfix/main.cf"
     RSPAMD_OVERRIDE_DIR: str = "/etc/rspamd/override.d"
     DKIM_KEY_DIR: str = "/var/lib/cmp/dkim-keys"
+    RSPAMD_DKIM_DIR: str = "/var/lib/rspamd/dkim"
+    DKIM_SELECTOR: str = "cmp"
     QUARANTINE_DIR: str = "/var/lib/cmp/quarantine"
     UPLOAD_DIR: str = "/var/lib/cmp/uploads"
     LOG_DIR: str = "/var/log/cmp"

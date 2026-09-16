@@ -430,7 +430,9 @@ function DLPTab() {
 
 // ── DKIM ──────────────────────────────────────────────────
 function DKIMTab() {
+  const qc = useQueryClient();
   const [rotating, setRotating] = useState<string | null>(null);
+  const [syncing, setSyncing] = useState(false);
   const [result, setResult] = useState<any>(null);
   const { data, isLoading } = useQuery({ queryKey: ['dkim'], queryFn: () => entFetch('/dkim-rotation') });
   const domains: any[] = data?.domains || [];
@@ -441,15 +443,29 @@ function DKIMTab() {
       setResult(res); toast.success('New DKIM key generated for ' + domain);
     } catch (e: any) { toast.error(e.message); } finally { setRotating(null); }
   };
+  const sync = async () => {
+    setSyncing(true);
+    try {
+      const res = await entFetch('/dkim-rotation/sync', { method: 'POST' });
+      const n = (res.synced || []).filter((s: any) => s.status === 'generated').length;
+      toast.success(`DKIM keys synced (${n} new, others already present)`);
+      qc.invalidateQueries({ queryKey: ['dkim'] });
+    } catch (e: any) { toast.error(e.message); } finally { setSyncing(false); }
+  };
   return (
     <div className="space-y-4">
-      <p className="text-sm text-gray-500">Rotate DKIM signing keys. After rotation, add the new TXT record to DNS, then delete the old one after 48h.</p>
+      <div className="flex items-start justify-between gap-4">
+        <p className="text-sm text-gray-500">DKIM signing keys live at {data?.key_dir || 'the rspamd signing path'}. After rotation, update the TXT record at the same host (selector does not change), then delete the old keys after 48h.</p>
+        <Button size="sm" variant="outline" onClick={sync} disabled={syncing}>
+          {syncing ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <RefreshCw className="w-4 h-4 mr-1" />}Sync Keys
+        </Button>
+      </div>
       {result && (
         <Card className="border-green-200 bg-green-50"><CardContent className="p-4">
-          <p className="text-sm font-semibold text-green-800 mb-2">New key generated — add to DNS:</p>
+          <p className="text-sm font-semibold text-green-800 mb-2">New key generated — update TXT in DNS at the same host:</p>
           <div className="flex items-start gap-2">
-            <code className="text-xs bg-white border border-green-200 rounded p-2 flex-1 whitespace-pre-wrap">{result.selector}._domainkey.{result.domain} IN TXT {result.dns_record}</code>
-            <Button size="sm" variant="outline" onClick={() => { navigator.clipboard.writeText(result.dns_record); toast.success('Copied'); }}><Copy className="w-4 h-4" /></Button>
+            <code className="text-xs bg-white border border-green-200 rounded p-2 flex-1 whitespace-pre-wrap">{result.dns_host} IN TXT {result.dns_record}</code>
+            <Button size="sm" variant="outline" onClick={() => { navigator.clipboard.writeText(result.dns_host + ' IN TXT ' + result.dns_record); toast.success('Copied'); }}><Copy className="w-4 h-4" /></Button>
           </div>
           <Button size="sm" className="mt-2" variant="outline" onClick={() => setResult(null)}>Dismiss</Button>
         </CardContent></Card>
@@ -457,13 +473,14 @@ function DKIMTab() {
       <Card><CardContent className="p-0">
         {isLoading ? <div className="py-8 flex justify-center"><Loader2 className="w-6 h-6 animate-spin text-gray-400" /></div> :
           domains.length === 0 ? <div className="py-8 text-center text-gray-400 text-sm">No domains found. Add a domain first.</div> :
-          <Table><TableHeader><TableRow><TableHead>Domain</TableHead><TableHead>Key Status</TableHead><TableHead className="text-right">Action</TableHead></TableRow></TableHeader>
+          <Table><TableHeader><TableRow><TableHead>Domain</TableHead><TableHead>Verified</TableHead><TableHead>Key Status</TableHead><TableHead className="text-right">Action</TableHead></TableRow></TableHeader>
             <TableBody>{domains.map((d: any) => (
               <TableRow key={d.domain}>
-                <TableCell className="font-medium">{d.domain}</TableCell>
-                <TableCell>{d.key_exists ? <Badge variant="success">Key exists</Badge> : <Badge variant="warning">No key</Badge>}</TableCell>
+                <TableCell className="font-medium">{d.domain}{d.source === 'legacy' && <span className="ml-1 text-[10px] text-gray-400 border border-gray-200 rounded px-1">legacy</span>}</TableCell>
+                <TableCell>{d.verified === null ? <Badge variant="outline">n/a</Badge> : d.verified ? <Badge variant="success">Verified</Badge> : <Badge variant="warning">Unverified</Badge>}</TableCell>
+                <TableCell>{d.key_exists ? <Badge variant="success">Key live</Badge> : <Badge variant="warning">No key</Badge>}</TableCell>
                 <TableCell className="text-right">
-                  <Button size="sm" variant="outline" onClick={() => rotate(d.domain)} disabled={rotating === d.domain}>
+                  <Button size="sm" variant="outline" onClick={() => rotate(d.domain)} disabled={rotating === d.domain || d.source === 'legacy'}>
                     {rotating === d.domain ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <RefreshCw className="w-4 h-4 mr-1" />}Rotate Key
                   </Button>
                 </TableCell>
